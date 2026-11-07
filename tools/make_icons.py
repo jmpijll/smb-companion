@@ -67,6 +67,60 @@ def render(size: int, tile: bool) -> Image.Image:
     return img.resize((size, size), Image.LANCZOS)
 
 
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+FONTS = ROOT / "assets" / "fonts"
+WHITE = (252, 250, 251, 255)  # Blade White
+STEEL = (169, 157, 162, 255)  # Muted Steel
+
+
+def mark(size: int) -> Image.Image:
+    """Shuriken on transparent, supersampled."""
+    big = size * 8
+    img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    c, r = big / 2, big * 0.48
+    draw.polygon([(c + x * r, c + y * r) for x, y in outline()], fill=PINK)
+    hole = r * 0.12
+    draw.ellipse((c - hole, c - hole, c + hole, c + hole), fill=(0, 0, 0, 0))
+    return img.resize((size, size), Image.LANCZOS)
+
+
+def wizard_large(scale: int) -> Image.Image:
+    """Installer side panel (164x314 at 100%): black, one slash, the mark and
+    the division label. No wordmark: the custom SMB lettering is not a font."""
+    from PIL import ImageFont
+
+    w, h = 164 * scale, 314 * scale
+    img = Image.new("RGBA", (w, h), VOID)
+    draw = ImageDraw.Draw(img)
+    # One controlled slash at the brand's 12-degree-ish diagonal.
+    s = scale
+    draw.polygon([(0, 248 * s), (w, 225 * s), (w, 228 * s), (0, 252 * s)], fill=PINK)
+    m = mark(70 * s)
+    img.alpha_composite(m, ((w - m.width) // 2, 40 * s))
+    display = ImageFont.truetype(str(FONTS / "BarlowCondensed-BlackItalic.ttf"), 30 * s)
+    label = ImageFont.truetype(str(FONTS / "Inter-SemiBold.ttf"), 8 * s)
+    y = 126 * s
+    for parts in ((("SMB ", WHITE), ("//", PINK)), (("LEAGUE OF", WHITE),), (("LEGENDS", WHITE),)):
+        total = sum(draw.textlength(t, font=display) for t, _ in parts)
+        x = (w - total) / 2
+        for t, colour in parts:
+            draw.text((x, y), t, font=display, fill=colour)
+            x += draw.textlength(t, font=display)
+        y += 29 * s
+
+    def tracked(text, y):
+        width = sum(draw.textlength(ch, font=label) + 1.8 * s for ch in text) - 1.8 * s
+        x = (w - width) / 2
+        for ch in text:
+            draw.text((x, y), ch, font=label, fill=STEEL)
+            x += draw.textlength(ch, font=label) + 1.8 * s
+
+    tracked("SEXY MAAR", 262 * s)
+    tracked("BESCHEIDEN", 274 * s)
+    return img
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     render(64, tile=False).save(OUT / "shuriken-64.png")
@@ -75,6 +129,13 @@ def main():
     frames = [render(s, tile=s >= 24) for s in sizes]
     frames[-1].save(OUT / "smb-lol.ico", sizes=[(s, s) for s in sizes], append_images=frames[:-1])
     print("wrote", ", ".join(p.name for p in sorted(OUT.iterdir())))
+
+    pkg = ROOT / "packaging"
+    pkg.mkdir(exist_ok=True)
+    for scale in (1, 2):
+        wizard_large(scale).save(pkg / f"wizard-large-{100 * scale}.png")
+        mark(58 * scale).save(pkg / f"wizard-small-{100 * scale}.png")
+    print("wrote packaging/wizard-*.png")
 
 
 if __name__ == "__main__":

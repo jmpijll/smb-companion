@@ -7,6 +7,9 @@ on:
 permissions:
   contents: write
 
+env:
+  INNO_VERSION: "6.7.4"
+
 jobs:
   release:
     runs-on: windows-latest
@@ -25,32 +28,30 @@ jobs:
       - run: cargo test --locked
       - run: cargo build --locked --release
 
-      - name: Package
+      - name: Install Inno Setup ${{ env.INNO_VERSION }}
         shell: pwsh
-        run: |
-          $name = "smb-lol-${{ github.ref_name }}-windows-x64"
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/release/smb-lol.exe "dist/$name.exe"
-          New-Item -ItemType Directory -Force "pkg/$name" | Out-Null
-          Copy-Item target/release/smb-lol.exe, README.md, LICENSE, THIRD_PARTY_NOTICES.md "pkg/$name/"
-          Compress-Archive -Path "pkg/$name" -DestinationPath "dist/$name.zip"
-          Get-ChildItem dist -File | ForEach-Object {
-            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
-          } | Set-Content -Encoding ascii dist/SHA256SUMS.txt
-          Get-Content dist/SHA256SUMS.txt
+        run: ./packaging/install-inno.ps1 -Version $env:INNO_VERSION
+
+      - name: Package installer and portable zip
+        shell: pwsh
+        run: ./packaging/package.ps1 -Iscc $env:ISCC
 
       - name: Publish
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $v = "${{ github.ref_name }}"
           $notes = @"
-          **Windows x64, portable.** Download the ``.exe`` and run it. No installer.
+          ### Downloads (Windows x64)
 
-          This build is **not code-signed** yet, so SmartScreen will warn: choose *More info → Run anyway*.
-          Check the file against ``SHA256SUMS.txt`` if you want to be sure.
+          | File | What it is |
+          | --- | --- |
+          | ``smb-lol-$v-setup.exe`` | **Installer.** Per-user, no admin rights. Start menu shortcut, optional *Start with Windows*, clean uninstall. |
+          | ``smb-lol-$v-portable.zip`` | **Portable.** Unzip anywhere and run ``smb-lol.exe``. Settings stay in that folder. |
+
+          Builds are **not code-signed** yet, so SmartScreen will warn: choose *More info → Run anyway*.
+          Check the files against ``SHA256SUMS.txt`` if you want to be sure.
 
           "@
-          gh release create "${{ github.ref_name }}" dist/* `
-            --title "SMB // League of Legends ${{ github.ref_name }}" `
-            --notes $notes --generate-notes --verify-tag
+          gh release create $v dist/* --title "SMB // League of Legends $v" --notes $notes --generate-notes --verify-tag

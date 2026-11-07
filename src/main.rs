@@ -11,6 +11,11 @@ use std::{path::PathBuf, sync::Arc};
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().collect();
     let flag = |f: &str| args.iter().any(|a| a == f);
+    if flag("--quit") {
+        // Used by the installer and uninstaller: close a running copy cleanly.
+        let closed = system::quit_running_instance(std::time::Duration::from_secs(8));
+        std::process::exit(if closed { 0 } else { 1 });
+    }
     let screenshot = args
         .iter()
         .position(|a| a == "--screenshot")

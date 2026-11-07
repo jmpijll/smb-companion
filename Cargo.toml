@@ -1,6 +1,6 @@
 [package]
 name = "smb-lol"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "SMB // League of Legends companion: automatic runes and summoner spells in champion select, without getting in the way of your game."
 license = "MIT"

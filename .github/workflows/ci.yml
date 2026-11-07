@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  INNO_VERSION: "6.7.4"
+
 jobs:
   check:
     runs-on: windows-latest
@@ -21,8 +24,17 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo build --locked --release
+
+      - name: Install Inno Setup ${{ env.INNO_VERSION }}
+        shell: pwsh
+        run: ./packaging/install-inno.ps1 -Version $env:INNO_VERSION
+
+      - name: Package installer and portable zip
+        shell: pwsh
+        run: ./packaging/package.ps1 -Iscc $env:ISCC
+
       - uses: actions/upload-artifact@v4
         with:
           name: smb-lol-${{ github.sha }}
-          path: target/release/smb-lol.exe
+          path: dist/*
           retention-days: 14

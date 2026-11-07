@@ -6,7 +6,11 @@ use std::{
     os::windows::ffi::OsStrExt,
     path::PathBuf,
     ptr::{null, null_mut},
-    sync::atomic::{AtomicIsize, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicIsize, Ordering},
+        OnceLock,
+    },
+    time::{Duration, Instant},
 };
 use windows_sys::Win32::{
     Foundation::{
@@ -24,20 +28,25 @@ use windows_sys::Win32::{
         },
         SystemInformation::GetLocalTime,
         Threading::{
-            CreateEventW, CreateMutexW, GetCurrentProcess, OpenEventW, SetEvent, SetPriorityClass,
-            WaitForSingleObject, BELOW_NORMAL_PRIORITY_CLASS, EVENT_MODIFY_STATE, INFINITE,
+            CreateEventW, CreateMutexW, GetCurrentProcess, OpenEventW, OpenMutexW, SetEvent,
+            SetPriorityClass, WaitForMultipleObjects, BELOW_NORMAL_PRIORITY_CLASS,
+            EVENT_MODIFY_STATE, INFINITE, SYNCHRONIZATION_SYNCHRONIZE,
         },
     },
     UI::WindowsAndMessaging::{
         AllowSetForegroundWindow, GetWindowRect, IsIconic, SetForegroundWindow, SetWindowPos,
         ShowWindow, SystemParametersInfoW, ASFW_ANY, SPI_GETWORKAREA, SWP_HIDEWINDOW,
-        SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_RESTORE, SW_SHOW, SW_SHOWMINNOACTIVE,
+        SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_RESTORE, SW_SHOW,
+        SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE,
     },
 };
 
 pub const APP_NAME: &str = "SMB LoL Companion";
 const MUTEX: &str = "Local\\smb-lol-companion.instance";
 const SHOW_EVENT: &str = "Local\\smb-lol-companion.show";
+const QUIT_EVENT: &str = "Local\\smb-lol-companion.quit";
+/// Next to the exe, this file switches the app to portable mode.
+pub const PORTABLE_MARKER: &str = "smb-lol.portable";
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 /// Off-screen origin used when starting in the tray, so the first frame that
 /// eframe insists on showing is never visible on any monitor.
@@ -48,6 +57,12 @@ fn wide(s: &str) -> Vec<u16> {
 }
 
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
+static QUIT: AtomicBool = AtomicBool::new(false);
+
+/// Set when the installer/uninstaller (via `--quit`) asked this copy to exit.
+pub fn quit_requested() -> bool {
+    QUIT.load(Ordering::SeqCst)
+}
 
 pub fn set_window(hwnd: isize) {
     WINDOW.store(hwnd, Ordering::SeqCst);
@@ -137,17 +152,82 @@ pub fn claim_single_instance(quiet: bool) -> bool {
             return false;
         }
         // The mutex handle is intentionally kept for the life of the process.
-        let ev = CreateEventW(null(), 0, 0, wide(SHOW_EVENT).as_ptr());
-        if !ev.is_null() {
-            let ev = ev as isize;
+        let show = CreateEventW(null(), 0, 0, wide(SHOW_EVENT).as_ptr());
+        let quit = CreateEventW(null(), 0, 0, wide(QUIT_EVENT).as_ptr());
+        if !show.is_null() && !quit.is_null() {
+            let events = [show as isize, quit as isize];
             std::thread::spawn(move || loop {
-                if WaitForSingleObject(ev as _, INFINITE) != 0 {
-                    break;
+                let handles = events.map(|h| h as _);
+                match WaitForMultipleObjects(2, handles.as_ptr(), 0, INFINITE) {
+                    0 => show_window(),
+                    1 => {
+                        QUIT.store(true, Ordering::SeqCst);
+                        wake_for_quit();
+                    }
+                    _ => break,
                 }
-                show_window();
             });
         }
         true
+    }
+}
+
+/// egui only runs while the window is shown, so a hidden window is shown
+/// off-screen (never activated) for the few frames it takes to shut down and
+/// remove the tray icon cleanly.
+fn wake_for_quit() {
+    let Some(h) = hwnd() else {
+        std::process::exit(0)
+    };
+    unsafe {
+        SetWindowPos(
+            h,
+            null_mut(),
+            OFFSCREEN as i32,
+            OFFSCREEN as i32,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        );
+        if IsIconic(h) != 0 {
+            ShowWindow(h, SW_SHOWNOACTIVATE);
+        }
+    }
+    // Last resort if the UI does not get to it.
+    std::thread::sleep(Duration::from_secs(5));
+    std::process::exit(0);
+}
+
+/// `--quit`: asks a running copy to exit and waits up to `timeout` for it.
+/// Returns true when no copy is running any more.
+pub fn quit_running_instance(timeout: Duration) -> bool {
+    unsafe {
+        let running = || {
+            let m = OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, 0, wide(MUTEX).as_ptr());
+            if m.is_null() {
+                false
+            } else {
+                CloseHandle(m);
+                true
+            }
+        };
+        if !running() {
+            return true;
+        }
+        let ev = OpenEventW(EVENT_MODIFY_STATE, 0, wide(QUIT_EVENT).as_ptr());
+        if ev.is_null() {
+            return false; // an older build without quit support
+        }
+        SetEvent(ev);
+        CloseHandle(ev);
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if !running() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        !running()
     }
 }
 
@@ -255,8 +335,22 @@ pub fn local_time() -> String {
     format!("{:02}:{:02}", t.wHour, t.wMinute)
 }
 
-/// %APPDATA%\SMB\LoL Companion — survives moving or updating the exe.
+/// The exe's folder when the portable marker sits next to it.
+pub fn portable_dir() -> Option<PathBuf> {
+    static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+        dir.join(PORTABLE_MARKER).is_file().then_some(dir)
+    })
+    .clone()
+}
+
+/// Portable: the exe's own folder. Installed: %APPDATA%\SMB\LoL Companion,
+/// which survives updates and moving the exe.
 pub fn data_dir() -> PathBuf {
+    if let Some(dir) = portable_dir() {
+        return dir;
+    }
     std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .or_else(|| {

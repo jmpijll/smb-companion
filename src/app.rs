@@ -454,6 +454,10 @@ impl Companion {
                       Close this window to keep running in the tray.",
                 STEEL,
             );
+            if system::portable_dir().is_some() {
+                ui.add_space(6.);
+                theme::label(ui, "Portable mode · settings stay in the app folder", STEEL);
+            }
         });
     }
 }
@@ -478,6 +482,10 @@ impl eframe::App for Companion {
         }
         if self.screenshot.is_some() {
             self.capture(ctx);
+        }
+        if system::quit_requested() && !self.quit {
+            self.quit = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if ctx.input(|i| i.viewport().close_requested()) && !self.quit && self.screenshot.is_none()
         {
