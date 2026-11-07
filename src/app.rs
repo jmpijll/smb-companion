@@ -202,7 +202,7 @@ impl Companion {
                 paint_shuriken(ui.painter(), rect.shrink(14.), STEEL_DIM, VOID, 0.);
             }
             ui.painter()
-                .rect_stroke(rect, 2, Stroke::new(1., PINK), StrokeKind::Inside);
+                .rect_stroke(rect, 2, Stroke::new(1.0_f32, PINK), StrokeKind::Inside);
             ui.add_space(6.);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.;
@@ -302,7 +302,7 @@ impl Companion {
             ),
         }
         ui.painter()
-            .rect_stroke(rect, 2, Stroke::new(1., BORDER), StrokeKind::Inside);
+            .rect_stroke(rect, 2, Stroke::new(1.0_f32, BORDER), StrokeKind::Inside);
         ui.painter().text(
             Pos2::new(cell.center().x, cell.bottom() - 7.),
             egui::Align2::CENTER_CENTER,
@@ -603,8 +603,13 @@ fn row(
 ) {
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(Vec2::splat(30.), Sense::hover());
-        ui.painter()
-            .rect(r, 2, VOID, Stroke::new(1., HAIRLINE), StrokeKind::Inside);
+        ui.painter().rect(
+            r,
+            2,
+            VOID,
+            Stroke::new(1.0_f32, HAIRLINE),
+            StrokeKind::Inside,
+        );
         icon(ui, r.shrink(4.));
         ui.add_space(4.);
         let w = (ui.available_width() - control_width - 8.).max(120.);
@@ -635,7 +640,7 @@ fn hairline(ui: &mut Ui) {
 fn alert(ui: &mut Ui, message: &str) {
     egui::Frame::new()
         .fill(Color32::from_rgb(0x22, 0x05, 0x12))
-        .stroke(Stroke::new(1., PINK_DEEP))
+        .stroke(Stroke::new(1.0_f32, PINK_DEEP))
         .corner_radius(RADIUS)
         .inner_margin(egui::Margin::symmetric(14, 12))
         .show(ui, |ui| {

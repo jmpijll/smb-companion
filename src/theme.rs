@@ -83,11 +83,11 @@ pub fn install(ctx: &egui::Context) {
     v.override_text_color = Some(WHITE);
     v.hyperlink_color = PINK;
     v.selection.bg_fill = PINK_DEEP;
-    v.selection.stroke = Stroke::new(1., PINK);
-    v.window_stroke = Stroke::new(1., BORDER);
+    v.selection.stroke = Stroke::new(1.0_f32, PINK);
+    v.window_stroke = Stroke::new(1.0_f32, BORDER);
     v.window_corner_radius = RADIUS.into();
     v.menu_corner_radius = RADIUS.into();
-    v.text_cursor.stroke = Stroke::new(2., PINK);
+    v.text_cursor.stroke = Stroke::new(2.0_f32, PINK);
     for (w, fill, stroke) in [
         (&mut v.widgets.noninteractive, CARBON, HAIRLINE),
         (&mut v.widgets.inactive, CARBON, BORDER),
@@ -97,14 +97,14 @@ pub fn install(ctx: &egui::Context) {
     ] {
         w.bg_fill = fill;
         w.weak_bg_fill = fill;
-        w.bg_stroke = Stroke::new(1., stroke);
+        w.bg_stroke = Stroke::new(1.0_f32, stroke);
         w.corner_radius = 2.into();
         w.expansion = 0.;
     }
-    v.widgets.noninteractive.fg_stroke = Stroke::new(1., STEEL);
-    v.widgets.inactive.fg_stroke = Stroke::new(1., WHITE);
-    v.widgets.hovered.fg_stroke = Stroke::new(1., WHITE);
-    v.widgets.active.fg_stroke = Stroke::new(1., WHITE);
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, STEEL);
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, WHITE);
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, WHITE);
+    v.widgets.active.fg_stroke = Stroke::new(1.0_f32, WHITE);
     ctx.set_visuals(v);
 
     ctx.style_mut(|s| {
@@ -173,7 +173,7 @@ pub fn section(ui: &mut Ui, value: &str) {
 pub fn panel() -> egui::Frame {
     egui::Frame::new()
         .fill(CARBON)
-        .stroke(Stroke::new(1., BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .corner_radius(RADIUS)
         .inner_margin(egui::Margin::symmetric(16, 12))
 }
@@ -201,7 +201,7 @@ pub fn cut_panel(ui: &mut Ui, accent: bool, add: impl FnOnce(&mut Ui)) {
         r.right_bottom(),
         r.left_bottom(),
     ];
-    let stroke = Stroke::new(1., if accent { PINK } else { BORDER });
+    let stroke = Stroke::new(1.0_f32, if accent { PINK } else { BORDER });
     ui.painter().set(
         where_bg,
         Shape::convex_polygon(pts.clone(), CARBON, Stroke::NONE),
@@ -214,7 +214,7 @@ pub fn cut_panel(ui: &mut Ui, accent: bool, add: impl FnOnce(&mut Ui)) {
         let n = Vec2::new(0.6, -1.).normalized() * 5.;
         let d = (b - a) * 0.18;
         ui.painter()
-            .line_segment([a + n + d, b + n - d], Stroke::new(2., PINK_HIGHLIGHT));
+            .line_segment([a + n + d, b + n - d], Stroke::new(2.0_f32, PINK_HIGHLIGHT));
     }
 }
 
@@ -271,7 +271,7 @@ pub fn paint_shuriken(
         mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
     }
     painter.add(Shape::mesh(mesh));
-    painter.add(Shape::closed_line(pts, Stroke::new(0.8, color)));
+    painter.add(Shape::closed_line(pts, Stroke::new(0.8_f32, color)));
     painter.circle_filled(c, r * 0.12, hole);
 }
 
@@ -314,7 +314,7 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
     p.add(Shape::convex_polygon(
         slanted(rect),
         dim(track_fill, enabled),
-        Stroke::new(1., dim(track_stroke, enabled)),
+        Stroke::new(1.0_f32, dim(track_stroke, enabled)),
     ));
     let knob_w = 16.;
     let x = egui::lerp(rect.left() + 4.0..=rect.right() - 4. - knob_w, t);
@@ -356,7 +356,7 @@ pub fn keycap(ui: &mut Ui, key: &str, selected: bool, size: Vec2) -> Response {
         rect,
         2,
         dim(fill, enabled),
-        Stroke::new(1., dim(stroke, enabled)),
+        Stroke::new(1.0_f32, dim(stroke, enabled)),
         StrokeKind::Inside,
     );
     // Keycap lip.
@@ -366,7 +366,7 @@ pub fn keycap(ui: &mut Ui, key: &str, selected: bool, size: Vec2) -> Response {
             rect.right_bottom() + Vec2::new(-3., -3.),
         ],
         Stroke::new(
-            1.,
+            1.0_f32,
             dim(if selected { PINK_DEEP } else { HAIRLINE }, enabled),
         ),
     );
@@ -400,7 +400,7 @@ pub fn button(ui: &mut Ui, label: &str, primary: bool) -> Response {
     p.add(Shape::convex_polygon(
         cut_corners(rect, 6.),
         dim(fill, enabled),
-        Stroke::new(1., dim(stroke, enabled)),
+        Stroke::new(1.0_f32, dim(stroke, enabled)),
     ));
     let mut job = LayoutJob::default();
     job.append(
@@ -436,7 +436,7 @@ fn focus_ring(ui: &Ui, response: &Response, rect: Rect) {
         ui.painter().rect_stroke(
             rect.expand(3.),
             2,
-            Stroke::new(1.5, WHITE),
+            Stroke::new(1.5_f32, WHITE),
             StrokeKind::Outside,
         );
     }
@@ -454,8 +454,8 @@ fn dim(c: Color32, enabled: bool) -> Color32 {
 /// lane highlighted, claw marks for jungle and a shield for support.
 pub fn paint_role(painter: &egui::Painter, rect: Rect, lane: &str, color: Color32) {
     let r = rect.shrink(rect.width() * 0.12);
-    let faint = Stroke::new(1.2, color.gamma_multiply(0.35));
-    let strong = Stroke::new(2.4, color);
+    let faint = Stroke::new(1.2_f32, color.gamma_multiply(0.35));
+    let strong = Stroke::new(2.4_f32, color);
     let inset = r.width() * 0.26;
     match lane {
         "top" | "mid" | "adc" => {
@@ -503,7 +503,7 @@ pub fn paint_role(painter: &egui::Painter, rect: Rect, lane: &str, color: Color3
                         Pos2::new(x - r.width() * 0.02, r.center().y),
                         Pos2::new(x + r.width() * 0.04, r.bottom()),
                     ],
-                    Stroke::new(2.2, color),
+                    Stroke::new(2.2_f32, color),
                 ));
             }
         }
@@ -524,14 +524,14 @@ pub fn paint_role(painter: &egui::Painter, rect: Rect, lane: &str, color: Color3
             ));
             painter.line_segment(
                 [c + Vec2::new(0., -h * 0.45), c + Vec2::new(0., h * 0.45)],
-                Stroke::new(2., color),
+                Stroke::new(2.0_f32, color),
             );
             painter.line_segment(
                 [
                     c + Vec2::new(-w * 0.45, -h * 0.05),
                     c + Vec2::new(w * 0.45, -h * 0.05),
                 ],
-                Stroke::new(2., color),
+                Stroke::new(2.0_f32, color),
             );
         }
         _ => {
@@ -551,7 +551,7 @@ pub fn paint_rune(painter: &egui::Painter, rect: Rect, color: Color32) {
         c + Vec2::new(0., a),
         c + Vec2::new(-a * 0.8, 0.),
     ];
-    painter.add(Shape::closed_line(pts, Stroke::new(1.8, color)));
+    painter.add(Shape::closed_line(pts, Stroke::new(1.8_f32, color)));
     painter.circle_filled(c, a * 0.26, color);
 }
 
@@ -568,6 +568,6 @@ pub fn paint_spell(painter: &egui::Painter, rect: Rect, color: Color32) {
             c + Vec2::new(8., -2.) * s,
             c + Vec2::new(0., -2.) * s,
         ],
-        Stroke::new(1.8, color),
+        Stroke::new(1.8_f32, color),
     ));
 }
