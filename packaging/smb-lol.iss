@@ -90,6 +90,8 @@ Root: HKCU; Subkey: "{#RunKey}"; ValueType: string; ValueName: "{#AppName}"; Val
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; Silent installs (the app updating itself) bring the companion back in the tray.
+Filename: "{app}\{#AppExe}"; Parameters: "--background"; Flags: nowait; Check: WizardSilent
 
 ; Settings in %APPDATA%\SMB\LoL Companion are deliberately kept on uninstall:
 ; other copies (portable or older builds) may share them.

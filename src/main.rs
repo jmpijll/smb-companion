@@ -3,6 +3,7 @@ mod app;
 mod client;
 mod system;
 mod theme;
+mod update;
 mod worker;
 
 use eframe::egui;
@@ -33,6 +34,19 @@ fn main() -> eframe::Result {
             return Ok(());
         }
         system::lower_priority();
+        std::panic::set_hook(Box::new(|info| system::log(&format!("Crash: {info}"))));
+        system::log(&format!(
+            "Started version {}{}{}.",
+            env!("CARGO_PKG_VERSION"),
+            if system::portable_dir().is_some() {
+                " (portable)"
+            } else if system::installed() {
+                ""
+            } else {
+                " (not installed)"
+            },
+            if background { " in the tray" } else { "" }
+        ));
     }
     // Never open over a running game: start in the tray instead.
     let start_hidden = live && (background || system::game_running());

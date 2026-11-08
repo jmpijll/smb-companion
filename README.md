@@ -19,9 +19,12 @@
 
 - **Runes.** Applies a recommended rune page for your champion and role the moment you pick.
   It writes to one page of its own (`SMB // Lee Sin · Jungle`). Your own pages are never edited or deleted.
-- **Summoner spells.** Sets the recommended pair, with Flash on **D** or **F**: your call, every game.
+- **Summoner spells.** Sets the recommended pair with Flash on your key. It learns that key from your own
+  games: where you left Flash last time, or where you move it in champion select. Nothing to set up.
 - **Shows its work.** Champion, role, keystone, rune trees and the spells on D/F, in League's own art,
   loaded from your local client. Hover for names in your client's language.
+- **Item set & skill order** *(optional, off by default)*. OP.GG's most played build as an item set in
+  your in-game shop, with the skill order in its first row. One set of its own; your other item sets stay as they are.
 - **Modes.** Ranked, normals, ARAM, ARAM Mayhem, URF, Arena and Swiftplay. Sits TFT out.
 
 ## Stays out of your game
@@ -46,7 +49,7 @@ Grab one from [Releases](../../releases/latest):
 | Where | `%LOCALAPPDATA%\Programs\SMB LoL Companion` | Any folder you unzip it to |
 | Settings | `%APPDATA%\SMB\LoL Companion` | Inside that folder |
 | Extras | Start menu, optional desktop shortcut and *Start with Windows*, uninstaller | — |
-| Updating | Run the new installer; it closes the running app first | Replace `smb-lol.exe` |
+| Updating | Automatic: installs new versions by itself while League is closed | Replace `smb-lol.exe`; the app shows when a new version is out |
 
 Builds are **not code-signed yet**, so Windows SmartScreen will warn you: choose **More info → Run anyway**.
 Compare the file against `SHA256SUMS.txt` if you like to be sure.
@@ -63,9 +66,13 @@ Coming from the earlier *Quiet Select* build? Quit it first. This app takes over
 
 ## Good to know
 
-- Recommendations come from OP.GG's public champion data and need an internet connection.
-  SMB and this project are not affiliated with OP.GG. If the data is unavailable, nothing is guessed: you'll see a note instead.
-- Rune page slots full? Free one up and press **Retry**. Nothing of yours gets deleted to make room.
+- Recommendations come from OP.GG's public champion data. SMB and this project are not affiliated with OP.GG.
+  No internet, or OP.GG unavailable? League's own recommended runes and spells fill in. Nothing is guessed.
+- Rune page slots full? Delete one in the client and the companion takes it from there.
+  Nothing of yours gets deleted to make room.
+- Problems retry on their own. **Activity log** (under *Connection & troubleshooting*) shows what happened and when.
+- The installed version checks this repository's GitHub releases once a day. A new installer is checked against
+  `SHA256SUMS.txt` and installed silently when you're not queueing, in champion select, in a game or looking at the window.
 - Third-party tools that use the League client API are common (rune importers, stat sites). Use it at your own discretion.
 
 ## Build from source
@@ -74,6 +81,7 @@ Requires Rust (stable, MSVC toolchain) on Windows.
 
 ```sh
 cargo test
+cargo test -- --ignored        # also downloads and verifies the latest release from GitHub
 cargo build --release          # target/release/smb-lol.exe
 ```
 
@@ -101,11 +109,11 @@ cargo build --release
 To publish, bump `version` in `Cargo.toml`, then push a matching tag. GitHub Actions tests, packages and creates the release:
 
 ```sh
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
-Builds are unsigned for now.
+Builds are unsigned for now. Installed copies pick up a new release by themselves within a day.
 
 ## Brand
 

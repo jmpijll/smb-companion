@@ -5,6 +5,11 @@ pub const PAGES: &str = "/lol-perks/v1/pages";
 pub const SESSION: &str = "/lol-champ-select/v1/session";
 pub const SPELLS: &str = "/lol-champ-select/v1/session/my-selection";
 pub const PROVIDER: &str = "lol-api-champion.op.gg";
+pub const ITEM_SETS: &str = "/lol-item-sets/v1/item-sets";
+/// The one item set this app owns; replaced on every write.
+const ITEM_SET_UID: &str = "534d422f-2f00-4c6f-8c00-000000000001";
+/// Updates are only ever downloaded from this repository's releases.
+pub const REPOSITORY: &str = "jmpijll/smb-lol";
 /// Rune pages this app owns start with this prefix. Pages named by the
 /// earlier "Quiet Select" build are adopted instead of duplicated.
 pub const OWN_PAGE: &str = "SMB //";
@@ -258,6 +263,260 @@ pub fn rune_page(data: &Value, champion: &str, lane: &str) -> Result<Value, Stri
     )
 }
 
+/// League's own position name for a lane.
+fn position(lane: &str) -> &'static str {
+    match lane {
+        "top" => "TOP",
+        "jungle" => "JUNGLE",
+        "mid" => "MIDDLE",
+        "adc" => "BOTTOM",
+        "support" => "UTILITY",
+        _ => "NONE",
+    }
+}
+
+pub fn position_lane(position: &str) -> &'static str {
+    match position.to_ascii_uppercase().as_str() {
+        "TOP" => "top",
+        "JUNGLE" => "jungle",
+        "MIDDLE" | "MID" => "mid",
+        "BOTTOM" => "adc",
+        "UTILITY" | "SUPPORT" => "support",
+        _ => "",
+    }
+}
+
+/// The client's built-in recommended page (runes and spells) for this pick:
+/// Riot's data, no internet provider needed. Used when OP.GG cannot help.
+pub fn league_recommendation(api: &dyn Api, champion: u64, lane: &str, map: u64) -> Option<Value> {
+    let path = format!(
+        "/lol-perks/v1/recommended-pages/champion/{champion}/position/{}/map/{}",
+        position(lane),
+        if map == 0 { 11 } else { map }
+    );
+    let pages = api.call("GET", &path, None).and_then(success).ok()?;
+    let pages = pages.as_array()?;
+    pages
+        .iter()
+        .find(|p| p["isDefaultPosition"] == true)
+        .or_else(|| pages.first())
+        .cloned()
+}
+
+/// A rune page from League's recommendation, named like the OP.GG pages.
+pub fn league_rune_page(rec: &Value, champion: &str, lane: &str) -> Option<Value> {
+    let ids = rec["perks"]
+        .as_array()?
+        .iter()
+        .map(|p| p["id"].as_u64().filter(|id| *id > 0))
+        .collect::<Option<Vec<_>>>()?;
+    let primary = rec["primaryPerkStyleId"].as_u64().filter(|x| *x > 0)?;
+    let secondary = rec["secondaryPerkStyleId"].as_u64().filter(|x| *x > 0)?;
+    if ids.len() != 9 {
+        return None;
+    }
+    Some(
+        json!({"name":format!("{OWN_PAGE} {}", champion_label(champion, lane)),"primaryStyleId":primary,"subStyleId":secondary,
+        "selectedPerkIds":ids,"current":true,"isActive":true,"isDeletable":true,"isEditable":true,"isValid":true,
+        "autoModifiedSelections":[0],"order":0,"quickPlayChampionIds":[]}),
+    )
+}
+
+pub fn league_spells(rec: &Value, key: &str) -> Option<Value> {
+    let ids = rec["summonerSpellIds"]
+        .as_array()?
+        .iter()
+        .map(Value::as_u64)
+        .collect::<Option<Vec<_>>>()?;
+    ordered_spells(&ids, key)
+}
+
+/// "E Q W, max Q > W > E" from OP.GG's most played skill order.
+pub fn skill_order(data: &Value) -> String {
+    fn letters(v: &Value, n: usize) -> Vec<&str> {
+        v.as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|k| ["Q", "W", "E", "R"].contains(k))
+            .take(n)
+            .collect()
+    }
+    let opening = letters(&data["skills"][0]["order"], 3);
+    let max = letters(&data["skill_masteries"][0]["ids"], 3);
+    match (opening.len() == 3, max.len() == 3) {
+        (true, true) => format!("{}, max {}", opening.join(" "), max.join(" > ")),
+        (false, true) => format!("max {}", max.join(" > ")),
+        (true, false) => opening.join(" "),
+        _ => String::new(),
+    }
+}
+
+/// OP.GG's most played build as a League item set: it shows up in the
+/// in-game shop for this champion only. Blocks without items are left out.
+pub fn item_set(data: &Value, champion: u64, label: &str, map: u64) -> Option<Value> {
+    let ids = |key: &str, rows: usize| {
+        let mut out = Vec::<u64>::new();
+        for row in data[key].as_array().into_iter().flatten().take(rows) {
+            for id in row["ids"].as_array().into_iter().flatten() {
+                if let Some(id) = id.as_u64().filter(|x| *x > 0) {
+                    out.push(id);
+                }
+            }
+        }
+        out
+    };
+    let mut seen = Vec::<u64>::new();
+    let mut unique = |list: Vec<u64>, max: usize| {
+        let mut out = Vec::new();
+        for id in list {
+            if !seen.contains(&id) && out.len() < max {
+                seen.push(id);
+                out.push(id);
+            }
+        }
+        out
+    };
+    let start = ids("starter_items", 1); // keeps doubles, such as two potions
+    let core = unique(ids("core_items", 1), 6);
+    let boots = unique(ids("boots", 2), 2);
+    let prism = unique(ids("prism_items", 4), 4);
+    let late = unique(ids("last_items", 12), 8);
+    let skills = skill_order(data);
+    let mut blocks = Vec::new();
+    for (title, items) in [
+        ("Start", start),
+        ("Core", core),
+        ("Boots", boots),
+        ("Prismatic", prism),
+        ("Situational", late),
+    ] {
+        if items.is_empty() {
+            continue;
+        }
+        let mut counted: Vec<(u64, u32)> = Vec::new();
+        for id in items {
+            match counted.iter_mut().find(|(i, _)| *i == id) {
+                Some((_, n)) => *n += 1,
+                None => counted.push((id, 1)),
+            }
+        }
+        let title = if blocks.is_empty() && !skills.is_empty() {
+            format!("{title} · skills {skills}")
+        } else {
+            title.to_owned()
+        };
+        blocks.push(json!({
+            "type": title,
+            "hideIfSummonerSpell": "",
+            "showIfSummonerSpell": "",
+            "items": counted
+                .iter()
+                .map(|(id, n)| json!({"id": id.to_string(), "count": n}))
+                .collect::<Vec<_>>(),
+        }));
+    }
+    if blocks.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "uid": ITEM_SET_UID,
+        "title": format!("{OWN_PAGE} {label}"),
+        "type": "custom",
+        "map": "any",
+        "mode": "any",
+        "startedFrom": "blank",
+        "sortrank": 0,
+        "associatedChampions": [champion],
+        "associatedMaps": if map > 0 { json!([map]) } else { json!([]) },
+        "preferredItemSlots": [],
+        "blocks": blocks,
+    }))
+}
+
+fn is_own_set(set: &Value) -> bool {
+    set["uid"] == ITEM_SET_UID || set["title"].as_str().is_some_and(is_own_page)
+}
+
+/// Replaces this app's item set (or removes it with `None`). Every other
+/// item set, including other tools', is written back exactly as read.
+/// Returns whether anything was written.
+pub fn apply_item_set(api: &dyn Api, set: Option<&Value>) -> Result<bool, String> {
+    let me = success(api.call("GET", "/lol-summoner/v1/current-summoner", None)?)?;
+    let id = me["summonerId"]
+        .as_u64()
+        .ok_or("League did not report your account for item sets.")?;
+    let path = format!("{ITEM_SETS}/{id}/sets");
+    let mut all = success(api.call("GET", &path, None)?)?;
+    let list = all["itemSets"]
+        .as_array_mut()
+        .ok_or("League returned an invalid item set list.")?;
+    let before = list.len();
+    list.retain(|s| !is_own_set(s));
+    if set.is_none() && list.len() == before {
+        return Ok(false);
+    }
+    if let Some(set) = set {
+        list.push(set.clone());
+    }
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    all["timestamp"] = json!(millis);
+    success(api.call("PUT", &path, Some(&all))?)?;
+    let check = success(api.call("GET", &path, None)?)?;
+    let ours = check["itemSets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|s| is_own_set(s));
+    match (set, ours) {
+        (Some(want), Some(got)) if got["title"] == want["title"] => Ok(true),
+        (None, None) => Ok(true),
+        _ => Err("League did not confirm the item set.".into()),
+    }
+}
+
+/// "[d]" -> "D", "[Shift][d]" -> "Shift+D"; first binding only.
+pub fn key_label(binding: &str) -> Option<String> {
+    let first = binding.split(',').next()?.trim();
+    let parts = first
+        .split(']')
+        .map(|p| p.trim_start_matches('['))
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            if let Some(n) = p.strip_prefix("Button ") {
+                return format!("M{n}"); // mouse buttons
+            }
+            let mut c = p.chars();
+            c.next()
+                .map(|f| f.to_uppercase().chain(c).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<String>>();
+    let label = parts.join("+");
+    (!label.is_empty() && label.chars().count() <= 7).then_some(label)
+}
+
+/// The keys the player actually uses for summoner spells (D/F unless rebound).
+pub fn spell_keys(api: &dyn Api) -> [String; 2] {
+    let settings = api
+        .call("GET", "/lol-game-settings/v1/input-settings", None)
+        .and_then(success)
+        .unwrap_or(Value::Null);
+    let key = |name: &str, default: &str| {
+        settings["GameEvents"][name]
+            .as_str()
+            .and_then(key_label)
+            .unwrap_or_else(|| default.into())
+    };
+    [
+        key("evtCastAvatarSpell1", "D"),
+        key("evtCastAvatarSpell2", "F"),
+    ]
+}
+
 pub fn recommendation_path(mode: &str, champion: u64, lane: &str, tier: &str) -> String {
     let base = format!("/api/GLOBAL/champions/{mode}/{champion}");
     match mode {
@@ -323,7 +582,7 @@ pub fn apply_runes(api: &dyn Api, page: &Value) -> Result<(), String> {
     } else {
         let reply = api.call("POST", PAGES, Some(page))?;
         if reply.status == 400 {
-            return Err("League could not create a rune page. Free one rune page slot, then retry; your pages were kept.".into());
+            return Err("All your rune page slots are in use. Delete one in the client and the companion takes it from there. Your pages were kept.".into());
         }
         success(reply)?["id"]
             .as_u64()
@@ -473,6 +732,13 @@ pub fn remote(path: &str) -> Result<Value, String> {
         .ok_or("The recommendation service returned an unexpected response.".into())
 }
 pub fn discover(custom: &str) -> Option<Connection> {
+    // The running client knows where it lives, wherever League is installed.
+    if let Some(c) = crate::system::league_client_dir()
+        .and_then(|dir| fs::read_to_string(dir.join("lockfile")).ok())
+        .and_then(|s| Connection::from_lockfile(&s))
+    {
+        return Some(c);
+    }
     let mut paths = Vec::<PathBuf>::new();
     if !custom.trim().is_empty() {
         paths.push(PathBuf::from(custom).join("lockfile"));
@@ -540,6 +806,63 @@ fn agent(local: bool) -> &'static ureq::Agent {
     } else {
         REMOTE.get_or_init(|| base().build())
     }
+}
+
+/// Downloads from this repository's GitHub releases (update checks and
+/// installers). Release assets redirect to GitHub's download host, which is
+/// the only other host accepted.
+pub fn github(url: &str, limit: usize) -> Result<Vec<u8>, String> {
+    use std::{io::Read, time::Duration};
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    let allowed = [
+        format!("https://api.github.com/repos/{REPOSITORY}/"),
+        format!("https://github.com/{REPOSITORY}/releases/download/"),
+    ];
+    if !allowed.iter().any(|p| url.starts_with(p.as_str())) {
+        return Err("Updates only come from the companion's own GitHub releases.".into());
+    }
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let agent = AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(10))
+            .timeout(Duration::from_secs(120))
+            .redirects(5)
+            .https_only(true)
+            .user_agent(concat!("smb-lol/", env!("CARGO_PKG_VERSION")))
+            .build()
+    });
+    let response = agent
+        .get(url)
+        .set(
+            "Accept",
+            "application/vnd.github+json, application/octet-stream",
+        )
+        .call()
+        .map_err(|e| format!("GitHub did not respond: {e}"))?;
+    let host = response
+        .get_url()
+        .strip_prefix("https://")
+        .and_then(|rest| rest.split(['/', ':']).next())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !(host == "github.com"
+        || host == "api.github.com"
+        || host.ends_with(".githubusercontent.com"))
+    {
+        return Err(format!(
+            "An update download was redirected to {host}; ignored."
+        ));
+    }
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "The download was interrupted.")?;
+    if bytes.len() > limit {
+        return Err("The download exceeded the expected size.".into());
+    }
+    Ok(bytes)
 }
 
 fn request(
@@ -750,7 +1073,7 @@ mod tests {
         ]);
         assert!(apply_runes(&api, &json!({}))
             .unwrap_err()
-            .contains("Free one rune page slot"));
+            .contains("Delete one in the client"));
         assert!(api.calls.borrow().iter().all(|c| c.0 != "DELETE"));
     }
     #[test]
@@ -1026,5 +1349,126 @@ mod tests {
             "/api/GLOBAL/champions/aram/99/none?tier=emerald_plus&version="
         );
         assert!(recommendation_path("classic", 99, "mid", "all").ends_with("&hl=en_US"));
+    }
+
+    #[test]
+    fn league_recommendation_fills_in_runes_and_spells() {
+        let rec = json!({"position":"JUNGLE","isDefaultPosition":true,"primaryPerkStyleId":8000,
+            "secondaryPerkStyleId":8100,"summonerSpellIds":[4,11],
+            "perks":[{"id":8010},{"id":9111},{"id":9104},{"id":8014},{"id":8143},{"id":8135},{"id":5005},{"id":5008},{"id":5001}]});
+        let api = Fake::new(vec![(
+            200,
+            json!([{"position":"TOP","isDefaultPosition":false}, rec.clone()]),
+        )]);
+        assert_eq!(
+            league_recommendation(&api, 64, "jungle", 0),
+            Some(rec.clone())
+        );
+        assert_eq!(
+            api.calls.borrow()[0].1,
+            "/lol-perks/v1/recommended-pages/champion/64/position/JUNGLE/map/11"
+        );
+        let page = league_rune_page(&rec, "Lee Sin", "jungle").unwrap();
+        assert_eq!(page["name"], "SMB // Lee Sin · Jungle");
+        assert_eq!(page["selectedPerkIds"][0], 8010);
+        assert_eq!(page["subStyleId"], 8100);
+        assert_eq!(
+            league_spells(&rec, "d").unwrap(),
+            json!({"spell1Id":4,"spell2Id":11})
+        );
+        assert_eq!(
+            league_spells(&rec, "f").unwrap(),
+            json!({"spell1Id":11,"spell2Id":4})
+        );
+        assert_eq!(position_lane("UTILITY"), "support");
+        // Incomplete pages are never applied.
+        let mut short = rec.clone();
+        short["perks"] = json!([{"id":8010}]);
+        assert!(league_rune_page(&short, "Lee Sin", "jungle").is_none());
+    }
+    #[test]
+    fn item_set_follows_the_most_played_build() {
+        let data = json!({
+            "starter_items":[{"ids":[1101,2003,2003]}],
+            "core_items":[{"ids":[6692,3071,6333]},{"ids":[1,2,3]}],
+            "boots":[{"ids":[3047]},{"ids":[3111]},{"ids":[3158]}],
+            "last_items":[{"ids":[6692]},{"ids":[3053]},{"ids":[6333]},{"ids":[3026]}],
+            "skills":[{"order":["E","Q","W","Q","Q","R"]}],
+            "skill_masteries":[{"ids":["Q","W","E"]}]
+        });
+        assert_eq!(skill_order(&data), "E Q W, max Q > W > E");
+        let set = item_set(&data, 64, "Lee Sin · Jungle", 11).unwrap();
+        assert_eq!(set["title"], "SMB // Lee Sin · Jungle");
+        assert_eq!(set["associatedChampions"], json!([64]));
+        assert_eq!(set["associatedMaps"], json!([11]));
+        let blocks = set["blocks"].as_array().unwrap();
+        assert_eq!(blocks[0]["type"], "Start · skills E Q W, max Q > W > E");
+        assert_eq!(
+            blocks[0]["items"],
+            json!([{"id":"1101","count":1},{"id":"2003","count":2}])
+        );
+        assert_eq!(blocks[1]["type"], "Core");
+        assert_eq!(blocks[2]["items"].as_array().unwrap().len(), 2);
+        // Core items are not repeated under situational.
+        assert_eq!(
+            blocks[3]["items"],
+            json!([{"id":"3053","count":1},{"id":"3026","count":1}])
+        );
+        // Arena: no starters, prismatic items instead; no data, no set.
+        let arena = json!({"core_items":[{"ids":[226692]}],"prism_items":[{"ids":[446691]}],
+            "skill_masteries":[{"ids":["Q","W","E"]}]});
+        let set = item_set(&arena, 64, "Lee Sin · Arena", 0).unwrap();
+        assert_eq!(set["blocks"][0]["type"], "Core · skills max Q > W > E");
+        assert_eq!(set["blocks"][1]["type"], "Prismatic");
+        assert_eq!(set["associatedMaps"], json!([]));
+        assert!(item_set(&json!({}), 64, "x", 11).is_none());
+    }
+    #[test]
+    fn item_sets_of_other_tools_are_written_back_untouched() {
+        let other = json!({"uid":"77e6","title":"OP.GG Jinx","blocks":[{"type":"x","items":[]}]});
+        let old = json!({"uid":"534d422f-2f00-4c6f-8c00-000000000001","title":"SMB // Ahri · Mid"});
+        let new =
+            json!({"uid":"534d422f-2f00-4c6f-8c00-000000000001","title":"SMB // Lee Sin · Jungle"});
+        let api = Fake::new(vec![
+            (200, json!({"summonerId":7})),
+            (
+                200,
+                json!({"accountId":1,"itemSets":[other.clone(), old],"timestamp":1}),
+            ),
+            (201, Value::Null),
+            (
+                200,
+                json!({"accountId":1,"itemSets":[other.clone(), new.clone()]}),
+            ),
+        ]);
+        assert_eq!(apply_item_set(&api, Some(&new)), Ok(true));
+        let calls = api.calls.borrow();
+        assert_eq!(calls[2].0, "PUT");
+        assert_eq!(calls[2].1, "/lol-item-sets/v1/item-sets/7/sets");
+        let sent = calls[2].2.as_ref().unwrap();
+        assert_eq!(sent["itemSets"], json!([other, new]));
+        assert_eq!(sent["accountId"], 1);
+    }
+    #[test]
+    fn removing_a_missing_item_set_writes_nothing() {
+        let api = Fake::new(vec![
+            (200, json!({"summonerId":7})),
+            (200, json!({"accountId":1,"itemSets":[{"title":"Mine"}]})),
+        ]);
+        assert_eq!(apply_item_set(&api, None), Ok(false));
+        assert!(api.calls.borrow().iter().all(|c| c.0 == "GET"));
+    }
+    #[test]
+    fn spell_key_labels_follow_league_bindings() {
+        assert_eq!(key_label("[d]").as_deref(), Some("D"));
+        assert_eq!(key_label("[Shift][d],[x]").as_deref(), Some("Shift+D"));
+        assert_eq!(key_label("[Button 4]").as_deref(), Some("M4"));
+        assert_eq!(key_label("[Ctrl][Shift][F12]"), None);
+        assert_eq!(key_label(""), None);
+        let api = Fake::new(vec![(
+            200,
+            json!({"GameEvents":{"evtCastAvatarSpell1":"[1]","evtCastAvatarSpell2":""}}),
+        )]);
+        assert_eq!(spell_keys(&api), ["1".to_string(), "F".to_string()]);
     }
 }

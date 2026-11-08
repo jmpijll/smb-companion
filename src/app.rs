@@ -1,7 +1,8 @@
 use crate::{
-    client::Asset,
+    client::{self, Asset},
     system,
     theme::{self, *},
+    update,
     worker::{self, Icons, Phase, Settings, Setup, SharedSettings, SharedStatus, Status},
 };
 use eframe::egui::{
@@ -20,10 +21,18 @@ use tray_icon::{
     Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
 
+struct Tray {
+    icon: TrayIcon,
+    auto: CheckMenuItem,
+    settings: SharedSettings,
+    status: SharedStatus,
+    tip: String,
+}
+
 thread_local! {
     // Tray objects are main-thread only; kept here so the native tray handler
     // can update/remove them even while egui is not painting a hidden window.
-    static TRAY: RefCell<Option<(TrayIcon, CheckMenuItem)>> = const { RefCell::new(None) };
+    static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
 }
 
 pub struct Companion {
@@ -66,6 +75,9 @@ impl Companion {
         let live = screenshot.is_none() && !demo;
         if connect {
             worker::start(settings.clone(), status.clone(), icons.clone());
+        }
+        if live {
+            update::start(status.clone());
         }
         let mut app = Self {
             settings,
@@ -184,12 +196,12 @@ impl Companion {
                 ui.add_space(12.);
                 hairline(ui);
                 ui.add_space(12.);
-                self.setup_card(ui, setup, config);
+                self.setup_card(ui, setup, config, &status.keys);
             }
         });
     }
 
-    fn setup_card(&mut self, ui: &mut Ui, setup: &Setup, config: &Settings) {
+    fn setup_card(&mut self, ui: &mut Ui, setup: &Setup, config: &Settings, keys: &[String; 2]) {
         let ctx = ui.ctx().clone();
         ui.horizontal(|ui| {
             // Champion portrait from the client, framed like the brand cards.
@@ -224,11 +236,11 @@ impl Companion {
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Spells read right-to-left: F, then D, so D ends up on the left.
-                for (i, key) in [(1usize, "F"), (0, "D")] {
+                for i in [1usize, 0] {
                     self.spell_slot(
                         ui,
                         setup.spells[i].as_ref(),
-                        key,
+                        &keys[i],
                         setup.spells_applied || !config.spells,
                     );
                 }
@@ -282,6 +294,33 @@ impl Companion {
                 }
             });
         });
+        if config.items && !setup.skills.is_empty() {
+            ui.add_space(8.);
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(Vec2::splat(30.), Sense::hover());
+                paint_item(
+                    ui.painter(),
+                    r.shrink(3.),
+                    if setup.items_applied { PINK } else { STEEL_DIM },
+                );
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.;
+                    text(
+                        ui,
+                        format!("Skills {}", setup.skills),
+                        13.,
+                        semibold(),
+                        WHITE,
+                    );
+                    let note = if setup.items_applied {
+                        "Item set waiting in your shop"
+                    } else {
+                        "Item set on its way"
+                    };
+                    text(ui, note, 11.5, FontFamily::Proportional, STEEL);
+                });
+            });
+        }
     }
 
     /// One summoner spell with the key it sits on, painted in a single
@@ -317,6 +356,8 @@ impl Companion {
 
     fn automation(&mut self, ui: &mut Ui, config: &mut Settings, status: &Status) {
         section(ui, "Automatic setup");
+        let cap = |label: &str| (label.chars().count() as f32 * 9. + 18.).max(36.);
+        let caps_width = cap(&status.keys[0]) + cap(&status.keys[1]) + 10.;
         let flash = status
             .flash_icon
             .as_ref()
@@ -362,13 +403,13 @@ impl Companion {
                             None => paint_spell(ui.painter(), r, PINK),
                         },
                         "Flash key",
-                        "Same key, every game.",
-                        82.,
+                        "Learns from your own games.",
+                        caps_width,
                         |ui| {
-                            for key in ["f", "d"] {
+                            for (key, label) in [("f", &status.keys[1]), ("d", &status.keys[0])] {
                                 let chosen = config.flash == key;
-                                if keycap(ui, &key.to_uppercase(), chosen, Vec2::new(36., 32.))
-                                    .on_hover_text(format!("Flash on {}", key.to_uppercase()))
+                                if keycap(ui, label, chosen, Vec2::new(cap(label), 32.))
+                                    .on_hover_text(format!("Flash on {label}"))
                                     .clicked()
                                 {
                                     config.flash = key.into();
@@ -377,11 +418,24 @@ impl Companion {
                         },
                     );
                 });
+                ui.add_space(8.);
+                hairline(ui);
+                ui.add_space(8.);
+                row(
+                    ui,
+                    |ui, r| paint_item(ui.painter(), r, PINK),
+                    "Item set & skill order",
+                    "OP.GG's build, waiting in your shop.",
+                    48.,
+                    |ui| {
+                        toggle(ui, &mut config.items, "Item set & skill order");
+                    },
+                );
             });
         });
     }
 
-    fn behaviour(&mut self, ui: &mut Ui) {
+    fn behaviour(&mut self, ui: &mut Ui, status: &Status) {
         section(ui, "Out of your way");
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -411,6 +465,26 @@ impl Companion {
                 FontFamily::Proportional,
                 STEEL,
             );
+            ui.add_space(4.);
+            if system::installed() {
+                text(
+                    ui,
+                    "Updates install themselves while League is closed.",
+                    11.5,
+                    FontFamily::Proportional,
+                    STEEL,
+                );
+            } else if !status.update.is_empty() {
+                ui.hyperlink_to(
+                    RichText::new(format!(
+                        "Version {} is out. Get it on GitHub",
+                        status.update
+                    ))
+                    .font(FontId::new(11.5, FontFamily::Proportional))
+                    .color(PINK),
+                    format!("https://github.com/{}/releases/latest", client::REPOSITORY),
+                );
+            }
         });
     }
 
@@ -425,21 +499,26 @@ impl Companion {
         .show(ui, |ui| {
             body(
                 ui,
-                "League is found automatically. If not, point to its install folder:",
+                "League is found by itself, wherever it's installed. Problems retry on \
+                 their own; the activity log says what happened.",
                 STEEL,
-            );
-            ui.add_space(4.);
-            ui.add(
-                egui::TextEdit::singleline(&mut config.folder)
-                    .hint_text("C:\\Riot Games\\League of Legends")
-                    .desired_width(f32::INFINITY)
-                    .margin(egui::Margin::symmetric(10, 7)),
             );
             ui.add_space(8.);
             ui.horizontal(|ui| {
                 if theme::button(ui, "Retry", false).clicked() {
                     config.revision += 1;
                     self.status.lock().unwrap().error.clear();
+                }
+                if theme::button(ui, "Activity log", false).clicked() {
+                    let dir = system::data_dir();
+                    let log = dir.join("activity.log");
+                    let _ = std::process::Command::new("explorer")
+                        .arg(if log.is_file() {
+                            format!("/select,{}", log.display())
+                        } else {
+                            dir.display().to_string()
+                        })
+                        .spawn();
                 }
                 if theme::button(ui, "Quit", false).clicked() {
                     self.quit = true;
@@ -449,9 +528,10 @@ impl Companion {
             ui.add_space(8.);
             body(
                 ui,
-                "Recommendations come from OP.GG and need internet. Your own rune pages \
-                      are never edited or deleted; the companion keeps one page of its own. \
-                      Close this window to keep running in the tray.",
+                "Recommendations come from OP.GG; without internet, League's own \
+                      recommendations fill in. Your own rune pages and item sets are never \
+                      edited or deleted; the companion keeps one of each. Close this window \
+                      to keep running in the tray.",
                 STEEL,
             );
             if system::portable_dir().is_some() {
@@ -515,7 +595,7 @@ impl eframe::App for Companion {
                     ui.add_space(16.);
                     self.hero(ui, &status, &config);
                     self.automation(ui, &mut config, &status);
-                    self.behaviour(ui);
+                    self.behaviour(ui, &status);
                     self.troubleshooting(ui, ctx, &mut config);
                     for error in [&status.error, &self.save_error] {
                         if !error.is_empty() {
@@ -730,7 +810,25 @@ fn create_tray(ctx: &egui::Context, settings: SharedSettings, status: SharedStat
         return false;
     };
     let (open_id, auto_id, quit_id) = (open.id().clone(), auto.id().clone(), quit.id().clone());
-    TRAY.with(|t| *t.borrow_mut() = Some((tray, auto)));
+    TRAY.with(|t| {
+        *t.borrow_mut() = Some(Tray {
+            icon: tray,
+            auto,
+            settings: settings.clone(),
+            status: status.clone(),
+            tip: String::new(),
+        })
+    });
+    // A main-thread timer keeps the tooltip current while the window is
+    // hidden: hovering the tray icon answers "did it work?" without a click.
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::SetTimer(
+            std::ptr::null_mut(),
+            0,
+            2000,
+            Some(tray_tick),
+        );
+    }
 
     // These run on the main thread from the tray's own window procedure, so
     // they work while the egui window is hidden and not painting.
@@ -752,7 +850,7 @@ fn create_tray(ctx: &egui::Context, settings: SharedSettings, status: SharedStat
             system::show_window();
             c.request_repaint();
         } else if event.id == auto_id {
-            let on = TRAY.with(|t| t.borrow().as_ref().map(|(_, a)| a.is_checked()));
+            let on = TRAY.with(|t| t.borrow().as_ref().map(|t| t.auto.is_checked()));
             let mut s = settings.lock().unwrap().clone();
             s.enabled = on.unwrap_or(!s.enabled);
             s.revision += 1;
@@ -770,10 +868,59 @@ fn create_tray(ctx: &egui::Context, settings: SharedSettings, status: SharedStat
 
 fn sync_tray(enabled: bool) {
     TRAY.with(|t| {
-        if let Some((_, auto)) = t.borrow().as_ref() {
-            auto.set_checked(enabled);
+        if let Some(t) = t.borrow().as_ref() {
+            t.auto.set_checked(enabled);
         }
     });
+}
+
+unsafe extern "system" fn tray_tick(_: *mut std::ffi::c_void, _: u32, _: usize, _: u32) {
+    TRAY.with(|t| {
+        let Ok(mut t) = t.try_borrow_mut() else {
+            return;
+        };
+        let Some(t) = t.as_mut() else { return };
+        let enabled = t.settings.lock().map(|s| s.enabled).unwrap_or(true);
+        let tip = match t.status.lock() {
+            Ok(s) => tooltip(&s, enabled),
+            Err(_) => return,
+        };
+        if tip != t.tip {
+            let _ = t.icon.set_tooltip(Some(&tip));
+            t.tip = tip;
+        }
+    });
+}
+
+/// Tray tooltip: the state in one line (Windows allows 127 characters).
+fn tooltip(status: &Status, enabled: bool) -> String {
+    let pick = |s: &Setup| match s.mode.as_str() {
+        "" => client::champion_label(&s.champion, &s.lane),
+        m => format!("{} · {m}", s.champion),
+    };
+    let state = if !enabled || status.phase == Phase::Paused {
+        "paused".to_owned()
+    } else if !status.error.is_empty() {
+        "needs a hand, see the window".to_owned()
+    } else {
+        match status.phase {
+            Phase::Offline => "waiting for League".to_owned(),
+            Phase::InGame => "in game".to_owned(),
+            Phase::ChampSelect => match &status.setup {
+                Some(s) if s.runes_applied || s.spells_applied => {
+                    format!("setup applied · {}", pick(s))
+                }
+                _ => "champion select".to_owned(),
+            },
+            _ if status.last_applied.is_empty() => "standing by".to_owned(),
+            _ => format!("standing by · last setup {}", status.last_applied),
+        }
+    };
+    let mut tip = format!("SMB LoL Companion · {state}");
+    if !status.update.is_empty() {
+        tip.push_str(&format!(" · version {} is out", status.update));
+    }
+    tip.chars().take(127).collect()
 }
 
 fn remove_tray() {
@@ -800,8 +947,10 @@ fn demo_status() -> Status {
             primary: Some(asset("Precision")),
             secondary: Some(asset("Inspiration")),
             spells: [Some(asset("Smite")), Some(asset("Flash"))],
+            skills: "E Q W, max Q > W > E".into(),
             runes_applied: true,
             spells_applied: true,
+            items_applied: true,
             ..Default::default()
         }),
         ..Default::default()

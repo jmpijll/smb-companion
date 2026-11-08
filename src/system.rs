@@ -3,12 +3,13 @@
 //! never activates the window unless the player asked for it.
 use std::{
     ffi::OsStr,
+    io::Write,
     os::windows::ffi::OsStrExt,
     path::PathBuf,
     ptr::{null, null_mut},
     sync::{
         atomic::{AtomicBool, AtomicIsize, Ordering},
-        OnceLock,
+        Mutex, OnceLock,
     },
     time::{Duration, Instant},
 };
@@ -28,14 +29,15 @@ use windows_sys::Win32::{
         },
         SystemInformation::GetLocalTime,
         Threading::{
-            CreateEventW, CreateMutexW, GetCurrentProcess, OpenEventW, OpenMutexW, SetEvent,
-            SetPriorityClass, WaitForMultipleObjects, BELOW_NORMAL_PRIORITY_CLASS,
-            EVENT_MODIFY_STATE, INFINITE, SYNCHRONIZATION_SYNCHRONIZE,
+            CreateEventW, CreateMutexW, GetCurrentProcess, OpenEventW, OpenMutexW, OpenProcess,
+            QueryFullProcessImageNameW, SetEvent, SetPriorityClass, WaitForMultipleObjects,
+            BELOW_NORMAL_PRIORITY_CLASS, EVENT_MODIFY_STATE, INFINITE,
+            PROCESS_QUERY_LIMITED_INFORMATION, SYNCHRONIZATION_SYNCHRONIZE,
         },
     },
     UI::WindowsAndMessaging::{
-        AllowSetForegroundWindow, GetWindowRect, IsIconic, SetForegroundWindow, SetWindowPos,
-        ShowWindow, SystemParametersInfoW, ASFW_ANY, SPI_GETWORKAREA, SWP_HIDEWINDOW,
+        AllowSetForegroundWindow, GetWindowRect, IsIconic, IsWindowVisible, SetForegroundWindow,
+        SetWindowPos, ShowWindow, SystemParametersInfoW, ASFW_ANY, SPI_GETWORKAREA, SWP_HIDEWINDOW,
         SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_RESTORE, SW_SHOW,
         SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE,
     },
@@ -236,16 +238,16 @@ pub fn lower_priority() {
     unsafe { SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS) };
 }
 
-/// True when the League game process (not just the client) is running.
-pub fn game_running() -> bool {
+/// Process ID of the first running process with this executable name.
+fn find_process(exe: &str) -> Option<u32> {
     unsafe {
         let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snap == INVALID_HANDLE_VALUE {
-            return false;
+            return None;
         }
         let mut entry: PROCESSENTRY32W = std::mem::zeroed();
         entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-        let mut found = false;
+        let mut found = None;
         let mut ok = Process32FirstW(snap, &mut entry) != 0;
         while ok {
             let len = entry
@@ -253,16 +255,49 @@ pub fn game_running() -> bool {
                 .iter()
                 .position(|c| *c == 0)
                 .unwrap_or(entry.szExeFile.len());
-            if String::from_utf16_lossy(&entry.szExeFile[..len])
-                .eq_ignore_ascii_case("League of Legends.exe")
-            {
-                found = true;
+            if String::from_utf16_lossy(&entry.szExeFile[..len]).eq_ignore_ascii_case(exe) {
+                found = Some(entry.th32ProcessID);
                 break;
             }
             ok = Process32NextW(snap, &mut entry) != 0;
         }
         CloseHandle(snap);
         found
+    }
+}
+
+/// True when the League game process (not just the client) is running.
+pub fn game_running() -> bool {
+    find_process("League of Legends.exe").is_some()
+}
+
+/// Folder of the running League client, wherever it is installed. Its
+/// lockfile lives next to it.
+pub fn league_client_dir() -> Option<PathBuf> {
+    ["LeagueClientUx.exe", "LeagueClient.exe"]
+        .iter()
+        .find_map(|exe| find_process(exe))
+        .and_then(|pid| unsafe {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() {
+                return None;
+            }
+            let mut buf = vec![0u16; 1024];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut len) != 0;
+            CloseHandle(process);
+            ok.then(|| PathBuf::from(String::from_utf16_lossy(&buf[..len as usize])))
+        })
+        .and_then(|exe| exe.parent().map(PathBuf::from))
+}
+
+/// Whether the player currently has the window on screen.
+pub fn window_visible() -> bool {
+    let Some(h) = hwnd() else { return false };
+    unsafe {
+        let mut win: RECT = std::mem::zeroed();
+        GetWindowRect(h, &mut win);
+        IsWindowVisible(h) != 0 && IsIconic(h) == 0 && (win.left as f32) > OFFSCREEN / 2.
     }
 }
 
@@ -328,11 +363,45 @@ pub fn set_autostart(on: bool) -> Result<(), String> {
     }
 }
 
-/// Local wall-clock time as HH:MM.
-pub fn local_time() -> String {
+fn now() -> SYSTEMTIME {
     let mut t: SYSTEMTIME = unsafe { std::mem::zeroed() };
     unsafe { GetLocalTime(&mut t) };
+    t
+}
+
+/// Local wall-clock time as HH:MM.
+pub fn local_time() -> String {
+    let t = now();
     format!("{:02}:{:02}", t.wHour, t.wMinute)
+}
+
+/// One line in `activity.log` next to the settings, so "why didn't it apply?"
+/// has an answer without asking the player anything. Bounded: past 256 KB the
+/// file rolls over to `activity.old.log`.
+pub fn log(message: &str) {
+    if cfg!(test) {
+        return;
+    }
+    static LOCK: Mutex<()> = Mutex::new(());
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = data_dir();
+    let path = dir.join("activity.log");
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > 256 * 1024) {
+        let _ = std::fs::rename(&path, dir.join("activity.old.log"));
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    let t = now();
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(
+            file,
+            "{}-{:02}-{:02} {:02}:{:02}:{:02}  {}",
+            t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond, message
+        );
+    }
 }
 
 /// The exe's folder when the portable marker sits next to it.
@@ -343,6 +412,16 @@ pub fn portable_dir() -> Option<PathBuf> {
         dir.join(PORTABLE_MARKER).is_file().then_some(dir)
     })
     .clone()
+}
+
+/// Installed by the setup (its uninstaller sits next to the exe), so the
+/// app may update itself with a newer setup.
+pub fn installed() -> bool {
+    portable_dir().is_none()
+        && std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.join("unins000.exe").is_file()))
+            .unwrap_or(false)
 }
 
 /// Portable: the exe's own folder. Installed: %APPDATA%\SMB\LoL Companion,

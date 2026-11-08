@@ -571,3 +571,30 @@ pub fn paint_spell(painter: &egui::Painter, rect: Rect, color: Color32) {
         Stroke::new(1.8_f32, color),
     ));
 }
+
+/// Item-set glyph: a shop bag, drawn in the same line weight as the others.
+pub fn paint_item(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let s = rect.width() / 28.;
+    let stroke = Stroke::new(1.8_f32, color);
+    painter.add(Shape::closed_line(
+        vec![
+            c + Vec2::new(-9., -4.) * s,
+            c + Vec2::new(9., -4.) * s,
+            c + Vec2::new(11., 11.) * s,
+            c + Vec2::new(-11., 11.) * s,
+        ],
+        stroke,
+    ));
+    painter.add(Shape::line(
+        vec![
+            c + Vec2::new(-4., -4.) * s,
+            c + Vec2::new(-4., -8.) * s,
+            c + Vec2::new(-2., -11.) * s,
+            c + Vec2::new(2., -11.) * s,
+            c + Vec2::new(4., -8.) * s,
+            c + Vec2::new(4., -4.) * s,
+        ],
+        stroke,
+    ));
+}

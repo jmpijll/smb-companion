@@ -1,6 +1,6 @@
 [package]
 name = "smb-lol"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "SMB // League of Legends companion: automatic runes and summoner spells in champion select, without getting in the way of your game."
 license = "MIT"
@@ -16,6 +16,7 @@ eframe = "0.33"
 egui = "0.33"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 raw-window-handle = "0.6"
+ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde_json = "1"
 tray-icon = "0.21"
