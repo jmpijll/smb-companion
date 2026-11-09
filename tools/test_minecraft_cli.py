@@ -110,11 +110,12 @@ INSERT INTO settings VALUES(NULL,NULL);
         self.write('.smb-companion/journal.json',b'{}')
         self.run_hook(73)
         self.assertEqual((self.profile/'mods/old.jar').read_bytes(),b'old mod')
-    def test_wrong_instance_and_unavailable_channel_block_without_gui(self):
+    def test_wrong_instance_blocks_without_gui(self):
         other=self.root/'other';other.mkdir();self.env['INST_DIR']=str(other)
         self.run_hook(73)
         self.assertFalse((self.profile/'.smb-companion').exists())
-        self.env['INST_DIR']=str(self.profile);self.channel.unlink()
+    def test_unavailable_channel_blocks_without_gui(self):
+        self.channel.unlink()
         self.run_hook(73)
         self.assertEqual((self.profile/'mods/old.jar').read_bytes(),b'old mod')
         self.assertFalse((self.profile/'mods/new.jar').exists())
@@ -129,5 +130,13 @@ INSERT INTO settings VALUES(NULL,NULL);
         self.assertFalse((self.profile/'mods/new.jar').exists())
         self.require_unblocked()
         self.assertIn('26.4', (self.settings.parent/'activity.log').read_text())
+    def test_active_java_defers_without_gui_or_profile_changes(self):
+        try:self.run_hook(0)
+        except AssertionError:
+            log=self.settings.parent/'activity.log'
+            if not log.exists() or 'another Java app is running' not in log.read_text():raise
+            self.run_hook(73)
+            self.assertFalse((self.profile/'.smb-companion').exists())
+        else:self.skipTest('No active Java session; full enabled update was tested instead')
 
 if __name__=='__main__':unittest.main()
