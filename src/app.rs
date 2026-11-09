@@ -1,5 +1,6 @@
 use crate::{
     client::{self, Asset},
+    minecraft::ui::Page as MinecraftPage,
     system,
     theme::{self, *},
     update,
@@ -36,6 +37,9 @@ thread_local! {
 }
 
 pub struct Companion {
+    live: bool,
+    minecraft_selected: bool,
+    minecraft: MinecraftPage,
     settings: SharedSettings,
     status: SharedStatus,
     icons: Icons,
@@ -65,21 +69,34 @@ impl Companion {
                 system::set_window(w.hwnd.get());
             }
         }
-        let settings = Arc::new(Mutex::new(Settings::load()));
+        let minecraft_selected =
+            std::env::args().any(|arg| arg == "--minecraft" || arg == "--demo-minecraft");
+        let demo = demo || std::env::args().any(|arg| arg == "--demo-minecraft");
+        let live = screenshot.is_none() && !demo;
+        let settings = Arc::new(Mutex::new(if live {
+            Settings::load()
+        } else {
+            Settings {
+                items: demo,
+                ..Default::default()
+            }
+        }));
         let status = Arc::new(Mutex::new(if demo {
             demo_status()
         } else {
             Status::default()
         }));
         let icons: Icons = Default::default();
-        let live = screenshot.is_none() && !demo;
-        if connect {
+        if connect && live {
             worker::start(settings.clone(), status.clone(), icons.clone());
         }
         if live {
             update::start(status.clone());
         }
         let mut app = Self {
+            live,
+            minecraft_selected,
+            minecraft: MinecraftPage::new(live, demo || !live),
             settings,
             status,
             icons,
@@ -101,8 +118,10 @@ impl Companion {
 
     fn save(&mut self, mut s: Settings) {
         s.revision += 1;
-        self.save_error = s.save().err().unwrap_or_default();
-        sync_tray(s.enabled);
+        if self.live {
+            self.save_error = s.save().err().unwrap_or_default();
+            sync_tray(s.enabled);
+        }
         *self.settings.lock().unwrap() = s;
     }
 
@@ -147,19 +166,38 @@ impl Companion {
                 };
                 job.append("SMB ", 0., fmt(WHITE));
                 job.append("//", 0., fmt(PINK));
-                job.append(" LEAGUE OF LEGENDS", 0., fmt(WHITE));
+                job.append(" COMPANION", 0., fmt(WHITE));
                 ui.label(job);
-                theme::label(ui, "Runes & spells companion", STEEL);
+                theme::label(
+                    ui,
+                    if self.minecraft_selected {
+                        "Minecraft · SMB pack"
+                    } else {
+                        "League · runes & spells"
+                    },
+                    STEEL,
+                );
             });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let label = if config.enabled { "Pause" } else { "Resume" };
-                if theme::button(ui, label, !config.enabled)
-                    .on_hover_text("Pause or resume automatic setup")
-                    .clicked()
-                {
-                    config.enabled = !config.enabled;
-                }
-            });
+            if !self.minecraft_selected {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = if config.enabled { "Pause" } else { "Resume" };
+                    if theme::button(ui, label, !config.enabled)
+                        .on_hover_text("Pause or resume automatic setup")
+                        .clicked()
+                    {
+                        config.enabled = !config.enabled;
+                    }
+                });
+            }
+        });
+        ui.add_space(10.);
+        ui.horizontal(|ui| {
+            if theme::button(ui, "League", !self.minecraft_selected).clicked() {
+                self.minecraft_selected = false;
+            }
+            if theme::button(ui, "Minecraft", self.minecraft_selected).clicked() {
+                self.minecraft_selected = true;
+            }
         });
     }
 
@@ -440,7 +478,7 @@ impl Companion {
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             let mut on = self.autostart;
-            let has_tray = self.has_tray;
+            let has_tray = self.has_tray && self.live;
             row(
                 ui,
                 |ui, r| paint_shuriken(ui.painter(), r.shrink(3.), PINK, VOID, 0.),
@@ -451,7 +489,7 @@ impl Companion {
                     ui.add_enabled_ui(has_tray, |ui| toggle(ui, &mut on, "Start with Windows"));
                 },
             );
-            if on != self.autostart {
+            if self.live && on != self.autostart {
                 match system::set_autostart(on) {
                     Ok(()) => self.autostart = on,
                     Err(e) => self.save_error = e,
@@ -469,21 +507,23 @@ impl Companion {
             if system::installed() {
                 text(
                     ui,
-                    "Updates install themselves while League is closed.",
+                    "Companion updates install while your games are closed.",
                     11.5,
                     FontFamily::Proportional,
                     STEEL,
                 );
             } else if !status.update.is_empty() {
-                ui.hyperlink_to(
-                    RichText::new(format!(
-                        "Version {} is out. Get it on GitHub",
-                        status.update
-                    ))
-                    .font(FontId::new(11.5, FontFamily::Proportional))
-                    .color(PINK),
-                    format!("https://github.com/{}/releases/latest", client::REPOSITORY),
-                );
+                ui.add_enabled_ui(self.live, |ui| {
+                    ui.hyperlink_to(
+                        RichText::new(format!(
+                            "Version {} is out. Get it on GitHub",
+                            status.update
+                        ))
+                        .font(FontId::new(11.5, FontFamily::Proportional))
+                        .color(PINK),
+                        format!("https://github.com/{}/releases/latest", client::REPOSITORY),
+                    );
+                });
             }
         });
     }
@@ -509,7 +549,11 @@ impl Companion {
                     config.revision += 1;
                     self.status.lock().unwrap().error.clear();
                 }
-                if theme::button(ui, "Activity log", false).clicked() {
+                if ui
+                    .add_enabled_ui(self.live, |ui| theme::button(ui, "Activity log", false))
+                    .inner
+                    .clicked()
+                {
                     let dir = system::data_dir();
                     let log = dir.join("activity.log");
                     let _ = std::process::Command::new("explorer")
@@ -582,7 +626,11 @@ impl eframe::App for Companion {
         let mut config = self.settings.lock().unwrap().clone();
         let old = config.clone();
         let status = self.status.lock().unwrap().clone();
-        let busy = status.busy && config.enabled;
+        let busy = if self.minecraft_selected {
+            self.minecraft.busy()
+        } else {
+            status.busy && config.enabled
+        };
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
@@ -593,11 +641,24 @@ impl eframe::App for Companion {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     self.header(ui, &mut config, busy);
                     ui.add_space(16.);
-                    self.hero(ui, &status, &config);
-                    self.automation(ui, &mut config, &status);
+                    if self.minecraft_selected {
+                        self.minecraft.show(ui);
+                    } else {
+                        self.hero(ui, &status, &config);
+                        self.automation(ui, &mut config, &status);
+                    }
                     self.behaviour(ui, &status);
-                    self.troubleshooting(ui, ctx, &mut config);
-                    for error in [&status.error, &self.save_error] {
+                    if !self.minecraft_selected {
+                        self.troubleshooting(ui, ctx, &mut config);
+                    }
+                    for error in [
+                        if self.minecraft_selected {
+                            ""
+                        } else {
+                            &status.error
+                        },
+                        &self.save_error,
+                    ] {
                         if !error.is_empty() {
                             ui.add_space(10.);
                             alert(ui, error);
@@ -614,7 +675,11 @@ impl eframe::App for Companion {
                             STEEL_DIM,
                         ));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let line = if !config.enabled {
+                            let line = if !self.live {
+                                "Preview · not saved".to_owned()
+                            } else if self.minecraft_selected {
+                                "Modrinth instance".to_owned()
+                            } else if !config.enabled {
                                 "Automation paused".to_owned()
                             } else if status.last_applied.is_empty() {
                                 status.activity.clone()
