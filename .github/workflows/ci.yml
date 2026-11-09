@@ -35,6 +35,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: smb-lol-${{ github.sha }}
+          name: smb-companion-${{ github.sha }}
           path: dist/*
           retention-days: 14

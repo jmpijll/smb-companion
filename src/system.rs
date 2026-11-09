@@ -43,7 +43,10 @@ use windows_sys::Win32::{
     },
 };
 
-pub const APP_NAME: &str = "SMB LoL Companion";
+pub const APP_NAME: &str = "SMB Companion";
+/// Name of the "Start with Windows" value. Never change it: the installer
+/// writes the same name, and older versions left it under this one.
+const RUN_VALUE: &str = "SMB LoL Companion";
 const MUTEX: &str = "Local\\smb-lol-companion.instance";
 const SHOW_EVENT: &str = "Local\\smb-lol-companion.show";
 const QUIT_EVENT: &str = "Local\\smb-lol-companion.quit";
@@ -313,7 +316,7 @@ fn read_run_value() -> Option<String> {
         let rc = RegGetValueW(
             HKEY_CURRENT_USER,
             wide(RUN_KEY).as_ptr(),
-            wide(APP_NAME).as_ptr(),
+            wide(RUN_VALUE).as_ptr(),
             RRF_RT_REG_SZ,
             null_mut(),
             buf.as_mut_ptr().cast(),
@@ -340,7 +343,7 @@ pub fn set_autostart(on: bool) -> Result<(), String> {
             RegSetKeyValueW(
                 HKEY_CURRENT_USER,
                 wide(RUN_KEY).as_ptr(),
-                wide(APP_NAME).as_ptr(),
+                wide(RUN_VALUE).as_ptr(),
                 REG_SZ,
                 data.as_ptr().cast(),
                 (data.len() * 2) as u32,
@@ -349,7 +352,7 @@ pub fn set_autostart(on: bool) -> Result<(), String> {
             match RegDeleteKeyValueW(
                 HKEY_CURRENT_USER,
                 wide(RUN_KEY).as_ptr(),
-                wide(APP_NAME).as_ptr(),
+                wide(RUN_VALUE).as_ptr(),
             ) {
                 2 => 0, // ERROR_FILE_NOT_FOUND: already off
                 rc => rc,

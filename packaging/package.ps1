@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
   Builds the release packages from an already-built release exe:
-    dist\smb-lol-v<version>-setup.exe          (installer, per-user)
-    dist\smb-lol-v<version>-portable.zip       (portable folder)
+    dist\smb-companion-v<version>-setup.exe          (installer, per-user)
+    dist\smb-companion-v<version>-portable.zip       (portable folder)
     dist\SHA256SUMS.txt
 .EXAMPLE
   cargo build --release
@@ -25,7 +25,7 @@ $OutDir = (Resolve-Path $OutDir).Path
 Get-ChildItem $OutDir -File | Remove-Item
 
 # Portable: the marker file keeps settings next to the exe instead of %APPDATA%.
-$name = "SMB LoL Companion"
+$name = "SMB Companion"
 $stage = Join-Path ([IO.Path]::GetTempPath()) "smb-lol-portable-$version"
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force "$stage\$name" | Out-Null
@@ -33,12 +33,12 @@ Copy-Item $Exe "$stage\$name\smb-lol.exe"
 Copy-Item README.md, THIRD_PARTY_NOTICES.md "$stage\$name\"
 Copy-Item LICENSE "$stage\$name\LICENSE.txt"
 @"
-SMB LoL Companion - portable mode.
+SMB Companion - portable mode.
 
 While this file sits next to smb-lol.exe, settings are stored in this folder
 instead of %APPDATA%. Delete it to switch to the normal per-user settings.
 "@ | Set-Content -Encoding utf8 "$stage\$name\smb-lol.portable"
-Compress-Archive -Path "$stage\$name" -DestinationPath "$OutDir\smb-lol-v$version-portable.zip" -CompressionLevel Optimal
+Compress-Archive -Path "$stage\$name" -DestinationPath "$OutDir\smb-companion-v$version-portable.zip" -CompressionLevel Optimal
 Remove-Item -Recurse -Force $stage
 
 # Installer.

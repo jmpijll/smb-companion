@@ -2,11 +2,11 @@
   <img src="assets/icon/app-256.png" width="88" alt="SMB shuriken mark">
 </p>
 
-<h1 align="center">SMB // League of Legends</h1>
+<h1 align="center">SMB Companion</h1>
 
 <p align="center">
   <b>SMB — Sexy Maar Bescheiden.</b> Dutch for “Sexy, but modest.”<br>
-  A companion app for SMB League players. Runes and summoner spells in champion select. Nothing else.
+  The small companion app for SMB players. For League of Legends: runes and summoner spells in champion select. Nothing else.
 </p>
 
 <p align="center">
@@ -43,10 +43,10 @@ The game has the focus. The companion doesn't ask for it.
 
 Grab one from [Releases](../../releases/latest):
 
-| | **Installer** `smb-lol-<version>-setup.exe` | **Portable** `smb-lol-<version>-portable.zip` |
+| | **Installer** `smb-companion-<version>-setup.exe` | **Portable** `smb-companion-<version>-portable.zip` |
 | --- | --- | --- |
 | Admin rights | Not needed (installs for your user only) | Not needed |
-| Where | `%LOCALAPPDATA%\Programs\SMB LoL Companion` | Any folder you unzip it to |
+| Where | `%LOCALAPPDATA%\Programs\SMB Companion` | Any folder you unzip it to |
 | Settings | `%APPDATA%\SMB\LoL Companion` | Inside that folder |
 | Extras | Start menu, optional desktop shortcut and *Start with Windows*, uninstaller | — |
 | Updating | Automatic: installs new versions by itself while League is closed | Replace `smb-lol.exe`; the app shows when a new version is out |
@@ -57,7 +57,7 @@ Compare the file against `SHA256SUMS.txt` if you like to be sure.
 Close the window and it keeps running in the tray. Right-click the shuriken for
 **Open**, **Automatic runes & spells** (on/off) and **Quit**.
 
-**Uninstall.** Installer: *Settings → Apps → SMB LoL Companion*. Your settings file is kept.
+**Uninstall.** Installer: *Settings → Apps → SMB Companion*. Your settings file is kept.
 Portable: switch off *Start with Windows*, quit from the tray, delete the folder.
 
 Portable mode comes from the `smb-lol.portable` file next to the exe. Delete it and the same exe uses `%APPDATA%` instead.
@@ -126,7 +126,7 @@ The shuriken here is a provisional geometric rendering of the compact SMB mark u
 Code: [MIT](LICENSE). Fonts: SIL Open Font License, see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 The SMB name, shuriken mark and visual identity belong to SMB — Sexy Maar Bescheiden and are not covered by the MIT license.
 
-SMB LoL Companion isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone
+SMB Companion isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone
 officially involved in producing or managing Riot Games properties. Riot Games and all associated properties are
 trademarks or registered trademarks of Riot Games, Inc. No Riot artwork is bundled; icons are read from your own
 installed League client at runtime.

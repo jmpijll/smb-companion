@@ -781,7 +781,7 @@ fn quarter_turns(t: f32) -> f32 {
 
 fn create_tray(ctx: &egui::Context, settings: SharedSettings, status: SharedStatus) -> bool {
     let menu = Menu::new();
-    let open = MenuItem::new("Open SMB LoL Companion", true, None);
+    let open = MenuItem::new("Open SMB Companion", true, None);
     let enabled = settings.lock().unwrap().enabled;
     let auto = CheckMenuItem::new("Automatic runes & spells", true, enabled, None);
     let quit = MenuItem::new("Quit", true, None);
@@ -801,7 +801,7 @@ fn create_tray(ctx: &egui::Context, settings: SharedSettings, status: SharedStat
         return false;
     };
     let Ok(tray) = TrayIconBuilder::new()
-        .with_tooltip("SMB LoL Companion · runes & spells")
+        .with_tooltip("SMB Companion · runes & spells")
         .with_icon(icon)
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
@@ -916,7 +916,7 @@ fn tooltip(status: &Status, enabled: bool) -> String {
             _ => format!("standing by · last setup {}", status.last_applied),
         }
     };
-    let mut tip = format!("SMB LoL Companion · {state}");
+    let mut tip = format!("SMB Companion · {state}");
     if !status.update.is_empty() {
         tip.push_str(&format!(" · version {} is out", status.update));
     }

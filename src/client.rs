@@ -9,7 +9,7 @@ pub const ITEM_SETS: &str = "/lol-item-sets/v1/item-sets";
 /// The one item set this app owns; replaced on every write.
 const ITEM_SET_UID: &str = "534d422f-2f00-4c6f-8c00-000000000001";
 /// Updates are only ever downloaded from this repository's releases.
-pub const REPOSITORY: &str = "jmpijll/smb-lol";
+pub const REPOSITORY: &str = "jmpijll/smb-companion";
 /// Rune pages this app owns start with this prefix. Pages named by the
 /// earlier "Quiet Select" build are adopted instead of duplicated.
 pub const OWN_PAGE: &str = "SMB //";

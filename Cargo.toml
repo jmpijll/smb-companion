@@ -2,9 +2,9 @@
 name = "smb-lol"
 version = "0.3.0"
 edition = "2021"
-description = "SMB // League of Legends companion: automatic runes and summoner spells in champion select, without getting in the way of your game."
+description = "SMB Companion: the small companion app for SMB players. League of Legends: automatic runes and summoner spells in champion select, without getting in the way of your game."
 license = "MIT"
-repository = "https://github.com/jmpijll/smb-lol"
+repository = "https://github.com/jmpijll/smb-companion"
 publish = false
 
 [[bin]]

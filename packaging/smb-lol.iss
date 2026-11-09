@@ -1,4 +1,4 @@
-﻿; SMB // League of Legends companion - per-user installer (no admin rights).
+﻿; SMB Companion - per-user installer (no admin rights).
 ; Build: ISCC /DAppVersion=0.2.0 /DSourceExe=..\target\release\smb-lol.exe packaging\smb-lol.iss
 ; packaging\package.ps1 does this for you.
 
@@ -11,7 +11,9 @@
 #ifndef OutputDir
   #define OutputDir "..\dist"
 #endif
-#define AppName "SMB LoL Companion"
+#define AppName "SMB Companion"
+; Earlier name. Its shortcuts are replaced; the Start with Windows value keeps this name so upgrades and the app agree.
+#define OldName "SMB LoL Companion"
 #define AppExe "smb-lol.exe"
 #define RunKey "Software\Microsoft\Windows\CurrentVersion\Run"
 
@@ -22,9 +24,9 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher=SMB - Sexy Maar Bescheiden
-AppPublisherURL=https://github.com/jmpijll/smb-lol
-AppSupportURL=https://github.com/jmpijll/smb-lol/issues
-AppUpdatesURL=https://github.com/jmpijll/smb-lol/releases
+AppPublisherURL=https://github.com/jmpijll/smb-companion
+AppSupportURL=https://github.com/jmpijll/smb-companion/issues
+AppUpdatesURL=https://github.com/jmpijll/smb-companion/releases
 AppCopyright=MIT License. Not endorsed by Riot Games.
 VersionInfoVersion={#AppVersion}
 VersionInfoProductName={#AppName}
@@ -38,7 +40,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 OutputDir={#OutputDir}
-OutputBaseFilename=smb-lol-v{#AppVersion}-setup
+OutputBaseFilename=smb-companion-v{#AppVersion}-setup
 SetupIconFile=..\assets\icon\smb-lol.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
@@ -80,13 +82,17 @@ Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
+[InstallDelete]
+Type: files; Name: "{autoprograms}\{#OldName}.lnk"
+Type: files; Name: "{autodesktop}\{#OldName}.lnk"
+
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Registry]
 ; Must match exactly what the app's own "Start with Windows" toggle writes.
-Root: HKCU; Subkey: "{#RunKey}"; ValueType: string; ValueName: "{#AppName}"; ValueData: """{app}\{#AppExe}"" --background"; Tasks: autostart
+Root: HKCU; Subkey: "{#RunKey}"; ValueType: string; ValueName: "{#OldName}"; ValueData: """{app}\{#AppExe}"" --background"; Tasks: autostart
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
@@ -126,7 +132,7 @@ var
   Value: String;
 begin
   if (CurUninstallStep = usPostUninstall) and
-     RegQueryStringValue(HKCU, '{#RunKey}', '{#AppName}', Value) and
+     RegQueryStringValue(HKCU, '{#RunKey}', '{#OldName}', Value) and
      (Pos(Lowercase(ExpandConstant('{app}')), Lowercase(Value)) > 0) then
-    RegDeleteValue(HKCU, '{#RunKey}', '{#AppName}');
+    RegDeleteValue(HKCU, '{#RunKey}', '{#OldName}');
 end;

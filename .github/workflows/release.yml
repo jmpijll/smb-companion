@@ -47,11 +47,11 @@ jobs:
 
           | File | What it is |
           | --- | --- |
-          | ``smb-lol-$v-setup.exe`` | **Installer.** Per-user, no admin rights. Start menu shortcut, optional *Start with Windows*, clean uninstall. |
-          | ``smb-lol-$v-portable.zip`` | **Portable.** Unzip anywhere and run ``smb-lol.exe``. Settings stay in that folder. |
+          | ``smb-companion-$v-setup.exe`` | **Installer.** Per-user, no admin rights. Start menu shortcut, optional *Start with Windows*, clean uninstall. |
+          | ``smb-companion-$v-portable.zip`` | **Portable.** Unzip anywhere and run ``smb-lol.exe``. Settings stay in that folder. |
 
           Builds are **not code-signed** yet, so SmartScreen will warn: choose *More info → Run anyway*.
           Check the files against ``SHA256SUMS.txt`` if you want to be sure.
 
           "@
-          gh release create $v dist/* --title "SMB // League of Legends $v" --notes $notes --generate-notes --verify-tag
+          gh release create $v dist/* --title "SMB Companion $v" --notes $notes --generate-notes --verify-tag

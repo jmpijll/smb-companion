@@ -139,7 +139,7 @@ pub fn newer_release(latest: &Value, current: &str) -> Option<Release> {
     if version(tag)? <= version(current)? {
         return None;
     }
-    let setup_name = format!("smb-lol-{tag}-setup.exe");
+    let setup_name = format!("smb-companion-{tag}-setup.exe");
     let asset = |name: &str| {
         latest["assets"]
             .as_array()?
@@ -181,12 +181,12 @@ mod tests {
     use serde_json::json;
 
     fn release(tag: &str) -> Value {
-        let base = "https://github.com/jmpijll/smb-lol/releases/download";
+        let base = "https://github.com/jmpijll/smb-companion/releases/download";
         json!({
             "tag_name": tag, "draft": false, "prerelease": false,
             "assets": [
-                {"name": format!("smb-lol-{tag}-setup.exe"), "browser_download_url": format!("{base}/{tag}/smb-lol-{tag}-setup.exe")},
-                {"name": format!("smb-lol-{tag}-portable.zip"), "browser_download_url": format!("{base}/{tag}/smb-lol-{tag}-portable.zip")},
+                {"name": format!("smb-companion-{tag}-setup.exe"), "browser_download_url": format!("{base}/{tag}/smb-companion-{tag}-setup.exe")},
+                {"name": format!("smb-companion-{tag}-portable.zip"), "browser_download_url": format!("{base}/{tag}/smb-companion-{tag}-portable.zip")},
                 {"name": "SHA256SUMS.txt", "browser_download_url": format!("{base}/{tag}/SHA256SUMS.txt")}
             ]
         })
@@ -196,8 +196,10 @@ mod tests {
     fn only_newer_complete_releases_are_installed() {
         let r = newer_release(&release("v0.3.1"), "0.3.0").unwrap();
         assert_eq!(r.version, "0.3.1");
-        assert_eq!(r.setup_name, "smb-lol-v0.3.1-setup.exe");
-        assert!(r.setup_url.ends_with("/v0.3.1/smb-lol-v0.3.1-setup.exe"));
+        assert_eq!(r.setup_name, "smb-companion-v0.3.1-setup.exe");
+        assert!(r
+            .setup_url
+            .ends_with("/v0.3.1/smb-companion-v0.3.1-setup.exe"));
         assert!(newer_release(&release("v0.10.0"), "0.9.9").is_some());
         assert!(newer_release(&release("v0.3.0"), "0.3.0").is_none());
         assert!(newer_release(&release("v0.2.9"), "0.3.0").is_none());
@@ -214,11 +216,11 @@ mod tests {
     fn checksums_are_matched_by_exact_file_name() {
         let h = "a".repeat(64);
         let sums = format!(
-            "{h}  smb-lol-v0.3.1-portable.zip\r\n{}  smb-lol-v0.3.1-setup.exe\r\n",
+            "{h}  smb-companion-v0.3.1-portable.zip\r\n{}  smb-companion-v0.3.1-setup.exe\r\n",
             "B".repeat(64)
         );
         assert_eq!(
-            checksum_for(&sums, "smb-lol-v0.3.1-setup.exe"),
+            checksum_for(&sums, "smb-companion-v0.3.1-setup.exe"),
             Some("b".repeat(64))
         );
         assert_eq!(checksum_for(&sums, "setup.exe"), None);
