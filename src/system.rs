@@ -275,6 +275,11 @@ pub fn game_running() -> bool {
 }
 
 /// Conservatively defer pack writes while any Minecraft/Java process exists.
+/// Whether a process with this executable name is running.
+pub fn process_running(exe: &str) -> bool {
+    find_process(exe).is_some()
+}
+
 pub fn minecraft_running() -> bool {
     ["java.exe", "javaw.exe", "Minecraft.Windows.exe"]
         .iter()

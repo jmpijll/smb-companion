@@ -49,6 +49,8 @@ impl Page {
         let view = self.handle.snapshot();
         if view.busy {
             "Working on your pack".into()
+        } else if view.installing || view.selected.as_ref().is_some_and(|i| !i.ready) {
+            "Installing in Modrinth".into()
         } else if view.selected.is_some() && !view.version.is_empty() {
             format!("Pack {}", view.version)
         } else {
@@ -74,8 +76,12 @@ impl Page {
         }
         hero(ui, &view, &mut settings, &mut action);
         self.automation(ui, &view, &mut settings);
+        // Something is still on its way (Modrinth, the pack, the hook): look
+        // again quietly instead of asking the player to refresh.
         let waiting = view.instances.is_empty()
-            || (settings.direct_hook && view.selected.is_some() && !view.hook_ready);
+            || view.installing
+            || view.selected.as_ref().is_some_and(|i| !i.ready)
+            || (self.copied && !view.hook_ready);
         if waiting && !view.busy && self.looked.elapsed() > LOOK_AGAIN {
             self.looked = Instant::now();
             action.get_or_insert(Action::Look);
@@ -133,6 +139,10 @@ impl Page {
                     }
                 });
             });
+            if view.selected.is_some() {
+                ui.add_space(10.);
+                self.strict_check(ui, &view, &mut settings);
+            }
         });
         for error in [&view.error, &self.error] {
             if !error.is_empty() {
@@ -152,7 +162,7 @@ impl Page {
                     ui,
                     |ui, r| paint_sync(ui.painter(), r, PINK),
                     "Pack updates",
-                    "Kept current before you play.",
+                    "Kept current while Minecraft is closed.",
                     48.,
                     |ui| {
                         toggle(ui, &mut settings.automatic, "Pack updates");
@@ -169,63 +179,57 @@ impl Page {
                         toggle(ui, &mut settings.launch_after_update, "Launch after update");
                     },
                 );
-                spaced_hairline(ui);
-                let custom = view
-                    .selected
-                    .as_ref()
-                    .is_some_and(|p| !view.hook_ready && !p.pre_launch.is_empty());
-                let detail = if view.hook_ready {
-                    "Modrinth's own Play button checks too."
-                } else if custom {
-                    "Your own launch hook stays; not checked."
-                } else if settings.direct_hook && view.selected.is_some() {
-                    "Paste once at Launch hooks → Pre-launch."
-                } else {
-                    "Also check when you start from Modrinth."
-                };
-                row(
-                    ui,
-                    |ui, r| paint_hook(ui.painter(), r, PINK),
-                    "Modrinth launches",
-                    detail,
-                    48.,
-                    |ui| {
-                        ui.add_enabled_ui(!custom, |ui| {
-                            toggle(ui, &mut settings.direct_hook, "Modrinth launches");
-                        });
-                    },
-                );
-                if settings.direct_hook && !view.hook_ready && !custom && view.selected.is_some() {
-                    self.hook_note(ui);
-                }
             });
         });
     }
 
-    /// The one-time paste, as a single line under its switch.
-    fn hook_note(&mut self, ui: &mut Ui) {
-        ui.add_space(6.);
-        ui.horizontal(|ui| {
-            ui.add_space(38.);
-            match &self.hook {
-                Ok(command) => {
-                    let label = if self.copied { "Copied" } else { "Copy hook" };
-                    if theme::button(ui, label, !self.copied)
-                        .on_hover_text(
-                            "In Modrinth: instance settings → Launch hooks → Pre-launch. \
-                             Paste, save. The companion notices by itself.",
-                        )
-                        .clicked()
-                    {
-                        ui.ctx().copy_text(command.clone());
-                        self.copied = true;
+    /// Optional: Modrinth's own Play waits for a pack check. Background
+    /// updates already cover it; this makes it strict.
+    fn strict_check(&mut self, ui: &mut Ui, view: &View, settings: &mut Settings) {
+        let custom = view
+            .selected
+            .as_ref()
+            .is_some_and(|p| !view.hook_ready && !p.pre_launch.is_empty());
+        let detail = if view.hook_ready {
+            "On. Modrinth's Play waits for a pack check."
+        } else if custom {
+            "Your own Modrinth launch hook stays as it is."
+        } else {
+            "Optional. Paste once at Launch hooks → Pre-launch."
+        };
+        let offer = !view.hook_ready && !custom;
+        row(
+            ui,
+            |ui, r| paint_hook(ui.painter(), r, PINK),
+            "Strict launch check",
+            detail,
+            if offer { 104. } else { 0. },
+            |ui| {
+                if !offer {
+                    return;
+                }
+                match &self.hook {
+                    Ok(command) => {
+                        let label = if self.copied { "Copied" } else { "Copy hook" };
+                        if theme::button(ui, label, false)
+                            .on_hover_text(
+                                "In Modrinth: instance settings → Launch hooks → Pre-launch. \
+                                 Paste, save. The companion notices by itself.",
+                            )
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(command.clone());
+                            settings.direct_hook = true;
+                            self.copied = true;
+                        }
+                    }
+                    Err(error) => {
+                        ui.label(RichText::new("!").color(PINK))
+                            .on_hover_text(error);
                     }
                 }
-                Err(error) => {
-                    text(ui, error, 11., FontFamily::Proportional, STEEL);
-                }
-            }
-        });
+            },
+        );
     }
 
     fn commit(&mut self, settings: Settings, old: Settings, action: Option<Action>) {
@@ -274,61 +278,82 @@ fn hero(ui: &mut Ui, view: &View, settings: &mut Settings, action: &mut Option<A
             ui.add_space(10.);
             chooser(ui, view, settings);
         }
-        if let Some(instance) = &view.selected {
-            ui.add_space(12.);
-            hairline(ui);
-            ui.add_space(12.);
-            ui.horizontal(|ui| {
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(54.), Sense::hover());
-                ui.painter().rect_filled(rect, 2, VOID);
-                paint_block(ui.painter(), rect.shrink(12.), PINK);
-                ui.painter()
-                    .rect_stroke(rect, 2, Stroke::new(1.0_f32, PINK), StrokeKind::Inside);
-                ui.add_space(6.);
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 2.;
-                    text(ui, "SMB pack", 17., semibold(), WHITE);
-                    let (line, color): (String, Color32) = if view.version.is_empty() {
-                        ("Not checked yet".into(), STEEL)
-                    } else if !view.latest.is_empty() && view.latest != view.version {
-                        (format!("{} → {}", view.version, view.latest), PINK)
-                    } else if view.latest == view.version {
-                        (format!("{} · up to date", view.version), STEEL)
-                    } else {
-                        (view.version.clone(), STEEL)
-                    };
-                    theme::label(ui, &line, color);
-                    text(
-                        ui,
-                        format!(
-                            "Minecraft {} · {} {}",
-                            instance.minecraft,
-                            capitalised(&instance.loader),
-                            instance.loader_version
-                        ),
-                        11.,
-                        FontFamily::Proportional,
-                        STEEL,
-                    );
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let label = if settings.launch_after_update {
-                        "Play"
-                    } else {
-                        "Update"
-                    };
-                    let same = instance.id == settings.instance_id;
-                    if ui
-                        .add_enabled_ui(!view.busy && same, |ui| theme::button(ui, label, true))
-                        .inner
-                        .clicked()
-                    {
-                        *action = Some(Action::Play);
-                    }
-                });
-            });
+        if view.modrinth_missing {
+            let get = pack_card(ui, "Needs Modrinth", None, "Get Modrinth", true);
+            if get {
+                ui.ctx()
+                    .open_url(egui::OpenUrl::new_tab("https://modrinth.com/app"));
+            }
+        } else if view.instances.is_empty() {
+            let line = if view.installing {
+                "Waiting for Modrinth"
+            } else {
+                "Not installed"
+            };
+            if pack_card(ui, line, None, "Install", !view.busy && !view.installing) {
+                *action = Some(Action::Install);
+            }
+        } else if let Some(instance) = &view.selected {
+            let line = if !instance.ready {
+                "Installing in Modrinth".to_owned()
+            } else if view.version.is_empty() {
+                "Not checked yet".to_owned()
+            } else if !view.latest.is_empty() && view.latest != view.version {
+                format!("{} → {}", view.version, view.latest)
+            } else if view.latest == view.version {
+                format!("{} · up to date", view.version)
+            } else {
+                view.version.clone()
+            };
+            let runtime = format!(
+                "Minecraft {} · {} {}",
+                instance.minecraft,
+                capitalised(&instance.loader),
+                instance.loader_version
+            );
+            let label = if settings.launch_after_update {
+                "Play"
+            } else {
+                "Update"
+            };
+            let enabled = !view.busy && instance.ready && instance.id == settings.instance_id;
+            if pack_card(ui, &line, Some(&runtime), label, enabled) {
+                *action = Some(Action::Play);
+            }
         }
     });
+}
+
+/// The pack row in the status card: block tile, name, one status line, an
+/// optional runtime line and the single main button. Returns whether it was clicked.
+fn pack_card(ui: &mut Ui, line: &str, runtime: Option<&str>, button: &str, enabled: bool) -> bool {
+    ui.add_space(12.);
+    hairline(ui);
+    ui.add_space(12.);
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(54.), Sense::hover());
+        ui.painter().rect_filled(rect, 2, VOID);
+        paint_block(ui.painter(), rect.shrink(12.), PINK);
+        ui.painter()
+            .rect_stroke(rect, 2, Stroke::new(1.0_f32, PINK), StrokeKind::Inside);
+        ui.add_space(6.);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 2.;
+            text(ui, "SMB pack", 17., semibold(), WHITE);
+            let color: Color32 = if line.contains('→') { PINK } else { STEEL };
+            theme::label(ui, line, color);
+            if let Some(runtime) = runtime {
+                text(ui, runtime, 11., FontFamily::Proportional, STEEL);
+            }
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_enabled_ui(enabled, |ui| theme::button(ui, button, true))
+                .inner
+                .clicked()
+        })
+        .inner
+    })
+    .inner
 }
 
 /// Which SMB instance to keep current, shown only when there is a choice.
@@ -428,6 +453,39 @@ mod tests {
         });
     }
 
+    #[test]
+    fn install_and_get_modrinth_cards_fit_the_compact_window() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        for view in [
+            View::default(),
+            View {
+                installing: true,
+                ..Default::default()
+            },
+            View {
+                modrinth_missing: true,
+                ..Default::default()
+            },
+        ] {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(400., 900.),
+                )),
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let width = ui.available_width();
+                    let mut action = None;
+                    hero(ui, &view, &mut Settings::default(), &mut action);
+                    assert!(ui.min_rect().width() <= width + 1.);
+                    assert!(action.is_none());
+                });
+            });
+        }
+    }
     #[test]
     fn loader_names_read_like_names() {
         assert_eq!(capitalised("fabric"), "Fabric");

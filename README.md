@@ -115,7 +115,7 @@ Development flags:
 | `--demo --screenshot out.png` | Render a sample champion-select state to a PNG and exit. |
 | `--minecraft` | Open the Minecraft page on a normal launch. |
 | `--demo-minecraft --screenshot out.png` | Render a synthetic Minecraft screen without live settings or actions. |
-| `--demo-minecraft --minecraft-demo-state setup` | Show the one-time hook setup example (also accepts `error`). |
+| `--demo-minecraft --minecraft-demo-state install` | Preview other states: `install`, `modrinth`, `error`. |
 | `--minecraft-prelaunch` | Synchronous, headless Modrinth hook; reads `INST_DIR`, exits 0 or 73. |
 | `--screenshot out.png --live` | Capture mode; live workers and external actions stay disabled. |
 

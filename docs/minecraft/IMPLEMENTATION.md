@@ -4,9 +4,11 @@ This is a local review build on `feat/minecraft-companion`. The public client fe
 
 ## Player flow
 
-1. Import a stable SMB mrpack in Modrinth App 0.23.1 using its normal import UI.
-2. Open the Minecraft page. A single SMB instance is picked automatically; with several, choose one. Use Play. Updates are synchronous before native launch handoff. Switching off launch after update makes this an update-only action.
-3. For launches directly from Modrinth, copy the hook and paste it into the instance's native pre-launch hook once. The companion notices it by itself (a quiet look every few seconds while something is missing). Existing custom hooks are never replaced.
+1. Open the Minecraft page. No SMB instance in Modrinth: press **Install**. The companion downloads the latest stable pack from the channel, checks its SHA256 and hands the file to Modrinth exactly like opening it (`Modrinth App.exe <file>.mrpack`, verified against the 0.23.1 source). Modrinth shows its own one-time safety prompt for packs not hosted on Modrinth; the player confirms there. No Modrinth: **Get Modrinth** opens its download page.
+2. The companion looks again every few seconds while something is on its way. A single SMB instance is selected automatically; with several, the player chooses one. Modrinth's own install stage is read, so nothing is touched while it is still installing.
+3. **Play** checks the pack and hands launch to Modrinth. Switching off launch after update makes it an update-only action.
+4. With pack updates on, the companion also checks while Minecraft is closed: a minute after start, every 30 minutes, and the moment Modrinth opens. These scheduled checks only change files when the server needs a newer pack, and stay quiet (problems go to the activity log). Modrinth's own Play button is therefore fine too.
+5. Optional strict mode, under Instance & troubleshooting: copy the launch hook and paste it once in the instance's pre-launch hook; Modrinth's Play then waits for a pack check. The companion notices the hook by itself. Existing custom hooks are never replaced.
 
 Same Minecraft/Fabric runtime only. When the runtime changes, migrate/import the new pack in native Modrinth, then select that instance in SMB; changing only the runtime setting cannot migrate the old pack. Java/Minecraft activity blocks updates conservatively; the helper has no GUI, notifications or focus calls. A checked offline launch blocks with a useful error; automatic checks can explicitly be disabled for an intact installation.
 
@@ -47,7 +49,7 @@ CLI tests use a disposable APPDATA/Modrinth database and real installed launcher
 
 Opt-in tests (run individually): `minecraft::modrinth::tests::native_discovery_readonly`, `minecraft::service::integration_tests::actual_export_archives_match_channel`, `minecraft::service::integration_tests::actual_export_downloads_stage_only`. The last downloads real client mods into disposable staging only. Set an explicit local channel for the latter two. None launches Minecraft or mutates a real profile.
 
-Actual egui captures are in this directory (compact layout matching the League page: one status card, one panel of switches, the rest under Instance & troubleshooting): [Minecraft ready](ready.png), [native setup](setup.png), [channel error](error.png), [League](league.png). All show synthetic states and are labeled Preview; no real settings/network/launcher actions run in screenshot mode. Default interactive window remains compact and scrolls.
+Actual egui captures are in this directory (compact layout matching the League page: one status card, one panel of switches, the rest under Instance & troubleshooting): [Minecraft ready](ready.png), [one-button install](install.png), [no Modrinth](modrinth.png), [channel error](error.png), [League](league.png). All show synthetic states and are labeled Preview; no real settings/network/launcher actions run in screenshot mode. Default interactive window remains compact and scrolls.
 
 ## Boundaries to validate before broad member rollout
 
@@ -56,7 +58,8 @@ The native external launch URL and synchronous hook were checked against Modrint
 ## Decisions made during implementation
 
 - Proceeded with reversible local work under the user's go-ahead, retaining an isolated branch. Cost if wrong: local changes can be revised without touching main.
-- Chose a supported one-time native hook paste instead of private database edits. Cost: one setup step for direct launches.
+- Chose a supported one-time native hook paste instead of private database edits, and made it optional: scheduled background checks cover launches from Modrinth. Cost: a member who starts Minecraft within 30 minutes of a server pack bump, before Modrinth was opened, can still start on the old pack unless the strict hook is set.
+- Installs go through Modrinth's own file-open route rather than creating instances in its database. Cost: Modrinth's one-time safety prompt for packs not hosted on Modrinth.
 - Limited initial automation to the same Minecraft/Fabric runtime. Cost: runtime migration remains manual in Modrinth.
 - Retained shipped mutable-file tombstones across removed/reintroduced defaults. Cost: small retained ownership metadata, preserving personal edits/deletions.
 - Kept exact stable client archive bytes, including ordinary private-repository contact URL metadata; source content/credentials are not published. Cost: that repository name is visible in client mod metadata if the client feed is approved.

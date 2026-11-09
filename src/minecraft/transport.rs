@@ -35,6 +35,11 @@ impl Source {
     pub fn channel(&self) -> Result<Channel, String> {
         Channel::parse(&self.fetch(&self.location, 1024 * 1024, false)?)
     }
+    /// The verified archive on disk, downloaded first when needed.
+    pub fn archive_path(&self, r: &PackRef) -> Result<PathBuf, String> {
+        self.archive(r)?;
+        Ok(self.cache.join(format!("{}.mrpack", r.sha256)))
+    }
     pub fn archive(&self, r: &PackRef) -> Result<Pack, String> {
         self.remaining()?;
         let path = self.cache.join(format!("{}.mrpack", r.sha256));

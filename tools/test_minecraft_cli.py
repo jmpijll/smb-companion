@@ -32,14 +32,14 @@ class HeadlessTests(unittest.TestCase):
         self.config = dict(instance_id='local:fixture', automatic=True, direct_hook=True, launch_after_update=True)
         with closing(sqlite3.connect(self.base / 'app.db')) as c:
             c.executescript("""
-CREATE TABLE instances(id TEXT,path TEXT,applied_content_set_id TEXT,name TEXT);
+CREATE TABLE instances(id TEXT,path TEXT,applied_content_set_id TEXT,name TEXT,install_stage TEXT);
 CREATE TABLE instance_content_sets(id TEXT,game_version TEXT,loader TEXT,loader_version TEXT);
 CREATE TABLE instance_links(instance_id TEXT,link_kind TEXT,imported_name TEXT,imported_version_number TEXT);
 CREATE TABLE instance_launch_overrides(instance_id TEXT,overrides TEXT);
 CREATE TABLE settings(hook_pre_launch TEXT,custom_dir TEXT);
 CREATE TABLE instance_sync_preferences(instance_id TEXT,feature TEXT,enabled INTEGER);
 CREATE TABLE sync_feature_settings(feature TEXT,globally_enabled INTEGER,new_instance_default INTEGER);
-INSERT INTO instances VALUES('local:fixture','smb','set','SMB');
+INSERT INTO instances VALUES('local:fixture','smb','set','SMB','installed');
 INSERT INTO instance_content_sets VALUES('set','26.3','fabric','0.20.1');
 INSERT INTO instance_links VALUES('local:fixture','imported_modpack','SMB','0.5.0');
 INSERT INTO settings VALUES(NULL,NULL);

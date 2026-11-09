@@ -16,6 +16,8 @@ pub struct Instance {
     pub sync_resources: bool,
     pub sync_options: bool,
     pub sync_servers: bool,
+    /// Modrinth finished installing the pack files (its own install stage).
+    pub ready: bool,
 }
 #[derive(Clone, Debug)]
 pub struct Discovery {
@@ -50,7 +52,7 @@ pub fn read_instances(db: &Path, base: &Path) -> Result<Vec<Instance>, String> {
             .join("profiles");
         let root =
             std::fs::canonicalize(root).map_err(|_| rusqlite::Error::InvalidPath(base.into()))?;
-        let mut q=c.prepare("SELECT i.id,i.path,i.name,l.imported_version_number,s.game_version,s.loader,s.loader_version,coalesce(json_extract(o.overrides,'$.hooks.pre_launch'),'') FROM instances i JOIN instance_content_sets s ON s.id=i.applied_content_set_id JOIN instance_links l ON l.instance_id=i.id LEFT JOIN instance_launch_overrides o ON o.instance_id=i.id WHERE l.link_kind='imported_modpack' AND l.imported_name='SMB'")?;
+        let mut q=c.prepare("SELECT i.id,i.path,i.name,l.imported_version_number,s.game_version,s.loader,s.loader_version,coalesce(json_extract(o.overrides,'$.hooks.pre_launch'),''),coalesce(i.install_stage,'') FROM instances i JOIN instance_content_sets s ON s.id=i.applied_content_set_id JOIN instance_links l ON l.instance_id=i.id LEFT JOIN instance_launch_overrides o ON o.instance_id=i.id WHERE l.link_kind='imported_modpack' AND l.imported_name='SMB'")?;
         let rows = q.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -61,12 +63,14 @@ pub fn read_instances(db: &Path, base: &Path) -> Result<Vec<Instance>, String> {
                 r.get::<_, String>(5)?,
                 r.get::<_, String>(6)?,
                 r.get::<_, String>(7)?,
+                r.get::<_, String>(8)?,
             ))
         })?;
         let mut result = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for row in rows {
-            let (id, path, name, imported_version, minecraft, loader, loader_version, hook) = row?;
+            let (id, path, name, imported_version, minecraft, loader, loader_version, hook, stage) =
+                row?;
             // Native paths are a single relative folder name. Never follow a profile junction.
             if path.is_empty() || path.contains(['/', '\\', ':']) || path == "." || path == ".." {
                 return Err(rusqlite::Error::InvalidPath(path.into()));
@@ -112,6 +116,8 @@ pub fn read_instances(db: &Path, base: &Path) -> Result<Vec<Instance>, String> {
                 sync_resources,
                 sync_options,
                 sync_servers,
+                // Pack files are in place; Minecraft itself may still follow.
+                ready: matches!(stage.as_str(), "installed" | "pack_installed"),
             });
         }
         Ok(result)
@@ -144,12 +150,40 @@ pub fn hook_command(exe: &Path) -> Result<String, String> {
     Ok(format!("\"{p}\" --minecraft-prelaunch"))
 }
 
-pub fn discover() -> Result<Discovery, String> {
+fn executable_path() -> Result<PathBuf, String> {
     let local = std::env::var_os("LOCALAPPDATA").ok_or("Windows app folders unavailable")?;
-    let executable = PathBuf::from(local).join("Modrinth App/Modrinth App.exe");
+    Ok(PathBuf::from(local).join("Modrinth App/Modrinth App.exe"))
+}
+
+/// Modrinth App is not installed in its standard per-user folder.
+pub fn missing() -> bool {
+    executable_path().map(|p| !p.is_file()).unwrap_or(true)
+}
+
+/// The verified Modrinth App 0.23.1 executable.
+pub fn executable() -> Result<PathBuf, String> {
+    let executable = executable_path()?;
     if executable_version(&executable)? != [0, 23, 1, 0] {
         return Err("This build supports Modrinth App 0.23.1. A different version needs adapter verification before updates can run.".into());
     }
+    Ok(executable)
+}
+
+/// Hands a verified .mrpack to Modrinth, exactly like opening the file:
+/// Modrinth installs it as a native instance after its own safety prompt.
+pub fn install(executable: &Path, mrpack: &Path) -> Result<(), String> {
+    if mrpack.extension().is_none_or(|e| e != "mrpack") || !mrpack.is_absolute() {
+        return Err("Only a local .mrpack file can be handed to Modrinth".into());
+    }
+    std::process::Command::new(executable)
+        .arg(mrpack)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Could not open Modrinth: {e}"))
+}
+
+pub fn discover() -> Result<Discovery, String> {
+    let executable = executable()?;
     let base = PathBuf::from(std::env::var_os("APPDATA").ok_or("Windows app folders unavailable")?)
         .join("ModrinthApp");
     let instances = read_instances(&base.join("app.db"), &base)?;
@@ -250,7 +284,7 @@ mod tests {
     fn database(t: &Temp) -> PathBuf {
         let p = t.0.join("app.db");
         let c = Connection::open(&p).unwrap();
-        c.execute_batch("CREATE TABLE instances(id TEXT,path TEXT,applied_content_set_id TEXT,name TEXT);CREATE TABLE instance_content_sets(id TEXT,game_version TEXT,loader TEXT,loader_version TEXT);CREATE TABLE instance_links(instance_id TEXT,link_kind TEXT,imported_name TEXT,imported_version_number TEXT);CREATE TABLE instance_launch_overrides(instance_id TEXT,overrides TEXT);CREATE TABLE settings(hook_pre_launch TEXT,custom_dir TEXT);CREATE TABLE instance_sync_preferences(instance_id TEXT,feature TEXT,enabled INTEGER);CREATE TABLE sync_feature_settings(feature TEXT,globally_enabled INTEGER,new_instance_default INTEGER);INSERT INTO instances VALUES('local:test','smb','set','SMB');INSERT INTO instance_content_sets VALUES('set','26.3','fabric','0.20.1');INSERT INTO instance_links VALUES('local:test','imported_modpack','SMB','0.5.0');INSERT INTO settings VALUES(NULL,NULL);").unwrap();
+        c.execute_batch("CREATE TABLE instances(id TEXT,path TEXT,applied_content_set_id TEXT,name TEXT,install_stage TEXT);CREATE TABLE instance_content_sets(id TEXT,game_version TEXT,loader TEXT,loader_version TEXT);CREATE TABLE instance_links(instance_id TEXT,link_kind TEXT,imported_name TEXT,imported_version_number TEXT);CREATE TABLE instance_launch_overrides(instance_id TEXT,overrides TEXT);CREATE TABLE settings(hook_pre_launch TEXT,custom_dir TEXT);CREATE TABLE instance_sync_preferences(instance_id TEXT,feature TEXT,enabled INTEGER);CREATE TABLE sync_feature_settings(feature TEXT,globally_enabled INTEGER,new_instance_default INTEGER);INSERT INTO instances VALUES('local:test','smb','set','SMB','installed');INSERT INTO instance_content_sets VALUES('set','26.3','fabric','0.20.1');INSERT INTO instance_links VALUES('local:test','imported_modpack','SMB','0.5.0');INSERT INTO settings VALUES(NULL,NULL);").unwrap();
         p
     }
     #[test]
@@ -267,7 +301,34 @@ mod tests {
             i[0].directory,
             fs::canonicalize(t.0.join("profiles/smb")).unwrap()
         );
+        assert!(i[0].ready);
         assert_eq!(before, fs::read(db).unwrap());
+    }
+    #[test]
+    fn an_instance_modrinth_is_still_installing_is_found_but_not_ready() {
+        let t = Temp::new();
+        let db = database(&t);
+        let c = Connection::open(&db).unwrap();
+        for (stage, ready) in [
+            ("pack_installing", false),
+            ("not_installed", false),
+            ("minecraft_installing", false),
+            ("pack_installed", true),
+            ("installed", true),
+        ] {
+            c.execute("UPDATE instances SET install_stage=?1", [stage])
+                .unwrap();
+            let i = read_instances(&db, &t.0).unwrap();
+            assert_eq!(i.len(), 1);
+            assert_eq!(i[0].ready, ready, "{stage}");
+        }
+    }
+    #[test]
+    fn only_local_mrpack_files_are_handed_to_modrinth() {
+        let exe = Path::new("C:/missing/Modrinth App.exe");
+        assert!(install(exe, Path::new("relative/SMB.mrpack")).is_err());
+        assert!(install(exe, Path::new("C:/packs/SMB.zip")).is_err());
+        assert!(install(exe, Path::new("modrinth://launch/instance/x")).is_err());
     }
     #[test]
     fn encodes_the_native_instance_id_and_quotes_executable_without_a_shell() {
