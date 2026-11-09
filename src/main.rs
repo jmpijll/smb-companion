@@ -1,6 +1,7 @@
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 mod app;
 mod client;
+mod minecraft;
 mod signing;
 mod system;
 mod theme;
@@ -13,6 +14,13 @@ use std::{path::PathBuf, sync::Arc};
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().collect();
     let flag = |f: &str| args.iter().any(|a| a == f);
+    if flag("--minecraft-prelaunch") {
+        let result = minecraft::service::prelaunch();
+        if let Err(e) = &result {
+            system::log(&format!("Minecraft launch blocked: {e}"));
+        }
+        std::process::exit(if result.is_ok() { 0 } else { 73 });
+    }
     if flag("--quit") {
         // Used by the installer and uninstaller: close a running copy cleanly.
         let closed = system::quit_running_instance(std::time::Duration::from_secs(8));
@@ -23,7 +31,7 @@ fn main() -> eframe::Result {
         .position(|a| a == "--screenshot")
         .and_then(|i| args.get(i + 1))
         .map(PathBuf::from);
-    let demo = flag("--demo");
+    let demo = flag("--demo") || flag("--demo-minecraft");
     let background = flag("--background");
     let live = screenshot.is_none() && !demo;
     // `--screenshot <png> --live` connects to League first (development aid).
@@ -50,13 +58,25 @@ fn main() -> eframe::Result {
         ));
     }
     // Never open over a running game: start in the tray instead.
-    let start_hidden = live && (background || system::game_running());
+    let start_hidden =
+        live && (background || system::game_running() || system::minecraft_running());
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title(system::APP_NAME)
         .with_app_id("smb-lol-companion")
         // Screenshot mode renders the whole page for documentation.
-        .with_inner_size([440., if screenshot.is_some() { 900. } else { 760. }])
+        .with_inner_size([
+            440.,
+            if screenshot.is_some() {
+                if flag("--demo-minecraft") {
+                    1180.
+                } else {
+                    900.
+                }
+            } else {
+                760.
+            },
+        ])
         .with_min_inner_size([400., 520.])
         .with_active(!start_hidden);
     if let Ok(icon) =

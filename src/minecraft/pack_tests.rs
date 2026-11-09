@@ -300,6 +300,7 @@ fn hardlink_replacement_does_not_modify_shared_content() {
 
 #[cfg(windows)]
 #[test]
+#[allow(clippy::permissions_set_readonly_false)] // Restore the Windows read-only attribute on our disposable test file.
 fn readonly_file_failure_does_not_poison_later_repairs() {
     let t = Temp::new();
     t.write("mods/a.jar", b"old");

@@ -126,12 +126,18 @@ fn quiet_moment(status: &SharedStatus) -> bool {
     !BUSY.contains(&flow.as_str())
         && !matches!(phase, Phase::ChampSelect | Phase::InGame)
         && !system::game_running()
+        && !system::minecraft_running()
+        && !crate::minecraft::service::operation_active()
         && !system::window_visible()
 }
 
 /// The installer closes this copy (`--quit`), installs over it with the
 /// player's earlier choices and starts the new version in the tray.
 fn install(setup: &PathBuf, version: &str) -> Result<(), String> {
+    let _pack_pause = crate::minecraft::service::Operation::acquire()?;
+    if system::minecraft_running() {
+        return Err("App update deferred while Minecraft or Java is running.".into());
+    }
     system::log(&format!("Installing version {version}."));
     let log = system::data_dir().join("update-install.log");
     Command::new(setup)

@@ -274,6 +274,13 @@ pub fn game_running() -> bool {
     find_process("League of Legends.exe").is_some()
 }
 
+/// Conservatively defer pack writes while any Minecraft/Java process exists.
+pub fn minecraft_running() -> bool {
+    ["java.exe", "javaw.exe", "Minecraft.Windows.exe"]
+        .iter()
+        .any(|exe| find_process(exe).is_some())
+}
+
 /// Folder of the running League client, wherever it is installed. Its
 /// lockfile lives next to it.
 pub fn league_client_dir() -> Option<PathBuf> {

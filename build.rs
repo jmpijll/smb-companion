@@ -4,7 +4,7 @@ fn main() {
         let mut res = winresource::WindowsResource::new();
         res.set_icon("assets/icon/smb-lol.ico")
             .set("ProductName", "SMB Companion")
-            .set("FileDescription", "SMB Companion")
+            .set("FileDescription", "SMB Companion - League and Minecraft")
             .set("CompanyName", "SMB - Sexy Maar Bescheiden")
             .set("LegalCopyright", "MIT License. Not endorsed by Riot Games.")
             .set("OriginalFilename", "smb-lol.exe");

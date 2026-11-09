@@ -1,8 +1,8 @@
 [package]
 name = "smb-lol"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
-description = "SMB Companion: the small companion app for SMB players. League of Legends: automatic runes and summoner spells in champion select, without getting in the way of your game."
+description = "SMB companion: League setup and verified Minecraft pack updates before play, without getting in the way of your game."
 license = "MIT"
 repository = "https://github.com/jmpijll/smb-companion"
 publish = false
@@ -19,11 +19,17 @@ raw-window-handle = "0.6"
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+fs2 = "0.4"
+rusqlite = { version = "0.37", features = ["bundled"] }
+url = "2.5"
+zip = { version = "6", default-features = false, features = ["deflate"] }
 tray-icon = "0.21"
 ureq = { version = "2.12", default-features = false, features = ["tls", "json"] }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",

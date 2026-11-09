@@ -2,11 +2,11 @@
   <img src="assets/icon/app-256.png" width="88" alt="SMB shuriken mark">
 </p>
 
-<h1 align="center">SMB Companion</h1>
+<h1 align="center">SMB // Companion</h1>
 
 <p align="center">
   <b>SMB — Sexy Maar Bescheiden.</b> Dutch for “Sexy, but modest.”<br>
-  The small companion app for SMB players. For League of Legends: runes and summoner spells in champion select. Nothing else.
+  A small companion for SMB players. League setup and a Minecraft pack that stays ready before play.
 </p>
 
 <p align="center">
@@ -27,6 +27,24 @@
   your in-game shop, with the skill order in its first row. One set of its own; your other item sets stay as they are.
 - **Modes.** Ranked, normals, ARAM, ARAM Mayhem, URF, Arena and Swiftplay. Sits TFT out.
 
+## Minecraft (preview)
+
+Choose **Minecraft**, select the SMB instance you already imported into **Modrinth App 0.23.1**, then use **Play SMB**.
+SMB checks the stable client channel, verifies the exact pack and mod checksums, and updates that instance before handing launch to Modrinth.
+Automatic updates, launch after update, and checking direct Modrinth launches have separate toggles. Checking a compatible older pack does not force a server-only release update; **Repair pack** explicitly applies the latest compatible runtime.
+
+For direct launches, copy the command shown in the app into the instance's **Custom game launch hooks → Pre-launch** field, save, then refresh SMB to verify it. Keep existing custom hooks unchanged. The helper waits for the update, returns a failure code when launch must stop, and never opens or focuses the companion window.
+
+- Updates cover pack-owned mods and defaults. Personal config edits, added mods, worlds and screenshots stay intact. Modified pack-owned mods cause a conflict; missing mods require explicit repair.
+- Minecraft/Fabric runtime changes need a native Modrinth runtime change first. SMB never edits the launcher database or reads account credentials.
+- Any running Java/Minecraft process defers updates. Interrupted changes are rolled back under an OS lock before another update; a pending recovery blocks launch even when checks are disabled.
+- Native resource-pack synchronization must be off for the selected instance. Native synced options/servers are excluded when first adopting it; enabling overlapping native sync later requires turning it off before further updates.
+- An unavailable channel blocks checked launches. Disable automatic checks explicitly to launch an intact existing pack without checking; interrupted installations still block.
+
+The public client feed is **not published yet**. The preview defaults to `jmpijll/smb-minecraft-client` and will honestly report it unavailable until those reviewed client artifacts are published. Developers can set `SMB_MINECRAFT_CHANNEL` to an explicit local `stable.json` for disposable-profile testing. No private GitHub token is needed or bundled. Client feed export instructions are in [the implementation notes](docs/minecraft/IMPLEMENTATION.md).
+
+The installed executable, updater repository and settings location remain compatible with existing `smb-lol` installations. Minecraft preferences are separate from League preferences.
+
 ## Stays out of your game
 
 The game has the focus. The companion doesn't ask for it.
@@ -36,8 +54,8 @@ The game has the focus. The companion doesn't ask for it.
 - **Start with Windows** goes straight to the tray, silently.
 - No overlays, no notifications, no taskbar flashing, no always-on-top.
 - Runs at below-normal CPU priority and polls less while a game is in progress.
-- One instance at a time. It talks only to the League client's local API (LCU), and only writes during champion select.
-  It never touches the game process, its memory or its files.
+- One GUI instance at a time. League uses the client's local API (LCU) and only writes during champion select.
+  Minecraft updates explicitly owned instance files before play. Neither feature opens a game process or reads game memory.
 
 ## Install
 
@@ -49,7 +67,7 @@ Grab one from [Releases](../../releases/latest):
 | Where | `%LOCALAPPDATA%\Programs\SMB Companion` | Any folder you unzip it to |
 | Settings | `%APPDATA%\SMB\LoL Companion` | Inside that folder |
 | Extras | Start menu, optional desktop shortcut and *Start with Windows*, uninstaller | — |
-| Updating | Automatic: installs new versions by itself while League is closed | Replace `smb-lol.exe`; the app shows when a new version is out |
+| Updating | Automatic: installs new versions while League, Minecraft/Java and pack updates are idle | Replace `smb-lol.exe`; the app shows when a new version is out |
 
 Builds are **not code-signed yet**, so Windows SmartScreen will warn you: choose **More info → Run anyway**.
 Compare the file against `SHA256SUMS.txt` if you like to be sure.
@@ -82,8 +100,10 @@ Requires Rust (stable, MSVC toolchain) on Windows.
 
 ```sh
 cargo test
-cargo test -- --ignored        # also checks the live signed update feeds and their installer
+cargo test update::tests::live -- --ignored # live signed update feeds and their installer
 cargo build --release          # target/release/smb-lol.exe
+python -m unittest discover -s tools -p test_export_minecraft_channel.py
+python -m unittest discover -s tools -p test_minecraft_cli.py # requires a debug build + installed Modrinth 0.23.1
 ```
 
 Development flags:
@@ -93,7 +113,11 @@ Development flags:
 | `--background` | Start in the tray (what *Start with Windows* uses). |
 | `--quit` | Close a running copy cleanly (used by the installer). |
 | `--demo --screenshot out.png` | Render a sample champion-select state to a PNG and exit. |
-| `--screenshot out.png --live` | Connect to the local client for 6 s, then capture. |
+| `--minecraft` | Open the Minecraft page on a normal launch. |
+| `--demo-minecraft --screenshot out.png` | Render a synthetic Minecraft screen without live settings or actions. |
+| `--demo-minecraft --minecraft-demo-state setup` | Show the one-time hook setup example (also accepts `error`). |
+| `--minecraft-prelaunch` | Synchronous, headless Modrinth hook; reads `INST_DIR`, exits 0 or 73. |
+| `--screenshot out.png --live` | Capture mode; live workers and external actions stay disabled. |
 
 The shuriken icons and installer artwork are generated by `python tools/make_icons.py` (Pillow).
 

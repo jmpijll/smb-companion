@@ -26,6 +26,7 @@ jobs:
           if ($tag -ne $version) { throw "Tag v$tag does not match Cargo.toml version $version" }
 
       - run: cargo test --locked
+      - run: python -m unittest discover -s tools -p test_export_minecraft_channel.py
       - run: cargo build --locked --release
 
       - name: Install Inno Setup ${{ env.INNO_VERSION }}
