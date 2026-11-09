@@ -152,7 +152,7 @@ impl Source {
                 .get(&current)
                 .set(
                     "User-Agent",
-                    "SMB-Companion/0.3 minecraft (github.com/jmpijll/smb-lol)",
+                    "SMB-Companion/0.3 minecraft (github.com/jmpijll/smb-companion)",
                 )
                 .call()
             {
