@@ -329,4 +329,20 @@ mod tests {
         assert!(validate_url("https://cdn.modrinth.com:444/data/a.jar", true).is_err());
         assert!(validate_url("https://evil.test/mod.jar", true).is_err());
     }
+    /// Talks to the public feed: `cargo test live_feed -- --ignored`.
+    #[test]
+    #[ignore]
+    fn live_feed_and_every_pack_verify() {
+        let cache = std::env::temp_dir().join(format!("smb-live-feed-{}", std::process::id()));
+        let source = Source::new(
+            "https://sexymaarbescheiden.nl/minecraft/stable.json".into(),
+            cache.clone(),
+        );
+        let channel = source.channel().unwrap();
+        for r in std::iter::once(&channel.pack).chain(channel.history.iter()) {
+            let pack = source.archive(r).unwrap();
+            assert!(!pack.is_empty(), "{} has no files", r.version);
+        }
+        let _ = fs::remove_dir_all(cache);
+    }
 }
