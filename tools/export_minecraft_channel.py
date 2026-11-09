@@ -278,7 +278,7 @@ def prepare(args):
     channel = {"schema": 1, "pack": next(ref for ref, _, _ in packs if ref["version"] == args.current),
                "history": [ref for ref, _, _ in packs if ref["version"] != args.current]}
     payload = {"stable.json": json_bytes(channel), **{ref["url"]: data for ref, data, _ in packs}}
-    review = {"schema": 1, "proposed_destination": "jmpijll/smb-minecraft-client",
+    review = {"schema": 1, "destination": "https://sexymaarbescheiden.nl/minecraft/",
               "public_files": [{"path": name, "size": len(data), "sha256": digest(data)} for name, data in sorted(payload.items())],
               "packs": [{"version": ref["version"], **details} for ref, _, details in packs],
               "review_required": "Review exact public_files bytes, including embedded mods/resources, before any publication. No publication performed."}

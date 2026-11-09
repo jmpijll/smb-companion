@@ -16,8 +16,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-const CHANNEL: &str =
-    "https://raw.githubusercontent.com/jmpijll/smb-minecraft-client/main/stable.json";
+/// The public SMB pack feed on the clan site; smb-minecraft's releases publish it.
+const CHANNEL: &str = "https://sexymaarbescheiden.nl/minecraft/stable.json";
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Settings {

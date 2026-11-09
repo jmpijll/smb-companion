@@ -41,7 +41,7 @@ For direct launches, copy the command shown in the app into the instance's **Cus
 - Native resource-pack synchronization must be off for the selected instance. Native synced options/servers are excluded when first adopting it; enabling overlapping native sync later requires turning it off before further updates.
 - An unavailable channel blocks checked launches. Disable automatic checks explicitly to launch an intact existing pack without checking; interrupted installations still block.
 
-The public client feed is **not published yet**. The preview defaults to `jmpijll/smb-minecraft-client` and will honestly report it unavailable until those reviewed client artifacts are published. Developers can set `SMB_MINECRAFT_CHANNEL` to an explicit local `stable.json` for disposable-profile testing. No private GitHub token is needed or bundled. Client feed export instructions are in [the implementation notes](docs/minecraft/IMPLEMENTATION.md).
+The pack comes from the public feed at `https://sexymaarbescheiden.nl/minecraft/stable.json`, which every `smb-minecraft` release publishes. The source repository stays private. Developers can set `SMB_MINECRAFT_CHANNEL` to an explicit local `stable.json` for disposable-profile testing. No private GitHub token is needed or bundled. Client feed export instructions are in [the implementation notes](docs/minecraft/IMPLEMENTATION.md).
 
 The installed executable, updater repository and settings location remain compatible with existing `smb-lol` installations. Minecraft preferences are separate from League preferences.
 

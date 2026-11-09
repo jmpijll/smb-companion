@@ -11,6 +11,8 @@ use std::{
     time::{Duration, Instant},
 };
 const DEADLINE: Duration = Duration::from_secs(10 * 60);
+const FEED_HOST: &str = "sexymaarbescheiden.nl";
+const FEED_PATH: &str = "/minecraft/";
 pub struct Source {
     location: String,
     cache: PathBuf,
@@ -214,23 +216,22 @@ fn validate_url(location: &str, mod_file: bool) -> Result<(), String> {
     {
         return Ok(());
     }
-    channel::mod_url(location)?;
+    if mod_file {
+        channel::mod_url(location)?;
+    }
     let u = url::Url::parse(location).map_err(|_| "Invalid URL")?;
-    if u.port_or_known_default() != Some(443) || u.fragment().is_some() {
+    if u.scheme() != "https"
+        || u.port_or_known_default() != Some(443)
+        || u.fragment().is_some()
+        || !u.username().is_empty()
+        || u.password().is_some()
+    {
         return Err("Unsupported download URL".into());
     }
-    if !mod_file {
-        let allowed = (u.host_str() == Some("raw.githubusercontent.com")
-            && u.path().starts_with("/jmpijll/smb-minecraft-client/"))
-            || (u.host_str() == Some("github.com")
-                && u.path().starts_with("/jmpijll/smb-minecraft-client/"))
-            || matches!(
-                u.host_str(),
-                Some("release-assets.githubusercontent.com" | "objects.githubusercontent.com")
-            );
-        if !allowed {
-            return Err("Pack metadata must come from the SMB client release repository".into());
-        }
+    // The feed and its packs only come from the SMB site's /minecraft/ folder.
+    let feed = u.host_str() == Some(FEED_HOST) && u.path().starts_with(FEED_PATH);
+    if !(mod_file || feed) {
+        return Err("Pack metadata must come from the SMB pack feed".into());
     }
     Ok(())
 }
@@ -308,21 +309,22 @@ mod tests {
     }
     #[test]
     fn rejects_untrusted_metadata_and_downgrade_redirects() {
+        assert!(validate_url("https://sexymaarbescheiden.nl/minecraft/stable.json", false).is_ok());
         assert!(validate_url(
-            "http://raw.githubusercontent.com/jmpijll/smb-minecraft-client/main/stable.json",
-            false
-        )
-        .is_err());
-        assert!(validate_url(
-            "https://raw.githubusercontent.com/other/project/main/stable.json",
-            false
-        )
-        .is_err());
-        assert!(validate_url(
-            "https://github.com/jmpijll/smb-minecraft-client/releases/download/v1/a",
+            "https://sexymaarbescheiden.nl/minecraft/packs/smb-0.13.0.mrpack",
             false
         )
         .is_ok());
+        assert!(validate_url("http://sexymaarbescheiden.nl/minecraft/stable.json", false).is_err());
+        assert!(validate_url("https://sexymaarbescheiden.nl/data/index.json", false).is_err());
+        assert!(validate_url(
+            "https://sexymaarbescheiden.nl:8443/minecraft/stable.json",
+            false
+        )
+        .is_err());
+        assert!(validate_url("https://evil.test/minecraft/stable.json", false).is_err());
+        assert!(validate_url("https://cdn.modrinth.com/data/stable.json", false).is_err());
+        assert!(validate_url("https://sexymaarbescheiden.nl/minecraft/a.jar", true).is_err());
         assert!(validate_url("https://cdn.modrinth.com/data/a.jar", true).is_ok());
         assert!(validate_url("https://cdn.modrinth.com:444/data/a.jar", true).is_err());
         assert!(validate_url("https://evil.test/mod.jar", true).is_err());
