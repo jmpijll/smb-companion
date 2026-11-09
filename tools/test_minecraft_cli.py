@@ -138,5 +138,17 @@ INSERT INTO settings VALUES(NULL,NULL);
             self.run_hook(73)
             self.assertFalse((self.profile/'.smb-companion').exists())
         else:self.skipTest('No active Java session; full enabled update was tested instead')
+    def test_screenshot_mode_does_not_take_foreground(self):
+        target=self.root/'capture.png'
+        process=subprocess.Popen([str(BINARY),'--demo-minecraft','--screenshot',str(target)],env=self.env,creationflags=subprocess.CREATE_NO_WINDOW)
+        focused=False;deadline=time.monotonic()+15
+        while process.poll() is None:
+            pid=wintypes.DWORD();USER32.GetWindowThreadProcessId(USER32.GetForegroundWindow(),ctypes.byref(pid))
+            focused=focused or pid.value==process.pid
+            if time.monotonic()>deadline:process.kill();self.fail('Screenshot did not exit')
+            time.sleep(.01)
+        self.assertEqual(process.returncode,0)
+        self.assertTrue(target.is_file())
+        self.assertFalse(focused,'Documentation capture took foreground focus')
 
 if __name__=='__main__':unittest.main()

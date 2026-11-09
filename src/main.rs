@@ -78,18 +78,18 @@ fn main() -> eframe::Result {
             },
         ])
         .with_min_inner_size([400., 520.])
-        .with_active(!start_hidden);
+        .with_active(!start_hidden && screenshot.is_none());
     if let Ok(icon) =
         eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon/app-256.png"))
     {
         viewport = viewport.with_icon(Arc::new(icon));
     }
-    if start_hidden {
+    if start_hidden || screenshot.is_some() {
         viewport = viewport.with_position([system::OFFSCREEN, system::OFFSCREEN]);
     }
     let options = eframe::NativeOptions {
         viewport,
-        centered: !start_hidden,
+        centered: !start_hidden && screenshot.is_none(),
         ..Default::default()
     };
     eframe::run_native(

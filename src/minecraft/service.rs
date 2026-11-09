@@ -216,27 +216,36 @@ fn refresh(config: &Settings, view: &Arc<Mutex<View>>) -> Result<(), String> {
         v.error = e.clone();
         v.title = "Modrinth setup needed".into();
     })?;
+    publish_discovery(config, d, view)
+}
+fn publish_discovery(
+    config: &Settings,
+    d: modrinth::Discovery,
+    view: &Arc<Mutex<View>>,
+) -> Result<(), String> {
     let selected = d
         .instances
         .iter()
         .find(|i| i.id == config.instance_id)
         .cloned();
-    let managed_version = if let Some(i) = &selected {
-        if i.directory.join(".smb-companion/state.json").exists() {
-            let lock = pack::ProfileLock::acquire(&i.directory)?;
-            if pack::has_pending(&i.directory)? {
-                return Err(
-                    "An interrupted update needs recovery. Use Check update before launching."
-                        .into(),
-                );
+    let managed_result = (|| -> Result<Option<String>, String> {
+        Ok(if let Some(i) = &selected {
+            if i.directory.join(".smb-companion/state.json").exists() {
+                let lock = pack::ProfileLock::acquire(&i.directory)?;
+                if pack::has_pending(&i.directory)? {
+                    return Err(
+                        "An interrupted update needs recovery. Use Check update before launching."
+                            .into(),
+                    );
+                }
+                pack::load_version(&lock)?
+            } else {
+                None
             }
-            pack::load_version(&lock)?
         } else {
             None
-        }
-    } else {
-        None
-    };
+        })
+    })();
     let mut v = view.lock().unwrap();
     v.instances = d.instances;
     v.selected = selected.clone();
@@ -247,6 +256,17 @@ fn refresh(config: &Settings, view: &Arc<Mutex<View>>) -> Result<(), String> {
             .and_then(|p| modrinth::hook_command(&p).ok())
             .is_some_and(|h| h == i.pre_launch)
     });
+    // Discovery remains available even when validation requires recovery. The
+    // player must be able to select this instance and invoke Check/Repair.
+    let managed_version = match managed_result {
+        Ok(version) => version,
+        Err(e) => {
+            v.title = "Recovery needed".into();
+            v.detail = "Use Check update to recover the interrupted pack before play.".into();
+            v.error = e.clone();
+            return Err(e);
+        }
+    };
     if let Some(i) = selected {
         v.version = managed_version.unwrap_or(i.imported_version);
         v.title = "Ready to check".into();
@@ -284,7 +304,7 @@ fn target<'a>(
 }
 fn runtime(i: &Instance, r: &PackRef) -> Result<(), String> {
     if i.minecraft != r.minecraft || i.loader != r.loader || i.loader_version != r.loader_version {
-        return Err(format!("This pack needs Minecraft {} / Fabric {}. Change the runtime in Modrinth before updating; nothing was changed.",r.minecraft,r.loader_version));
+        return Err(format!("This pack needs Minecraft {} / Fabric {}. Import the new pack as a native Modrinth instance, then select it in SMB. Automatic updates only support the same runtime; no pack files were changed.",r.minecraft,r.loader_version));
     }
     Ok(())
 }
@@ -415,7 +435,7 @@ fn synchronize(
 }
 fn perform(config: &Settings, action: Action, view: &Arc<Mutex<View>>) -> Result<(), String> {
     let (executable, i) = selected(config)?;
-    if matches!(action, Action::Check | Action::Repair) || config.automatic {
+    if should_update(config, action) {
         update_profile(config, &i, matches!(action, Action::Repair), view)?;
     } else {
         ensure_consistent(&i.directory)?;
@@ -435,6 +455,13 @@ fn perform(config: &Settings, action: Action, view: &Arc<Mutex<View>>) -> Result
         v.detail = "Modrinth handles login and game startup. SMB will stay out of the way.".into();
     }
     Ok(())
+}
+fn should_update(config: &Settings, action: Action) -> bool {
+    match action {
+        Action::Check | Action::Repair => true,
+        Action::Play => config.automatic || !config.launch_after_update,
+        Action::Discover => false,
+    }
 }
 fn ensure_consistent(profile: &Path) -> Result<(), String> {
     if pack::has_pending(profile)? {
@@ -634,6 +661,75 @@ mod integration_tests {
             minecraft: runtime.into(),
             loader: "fabric".into(),
             loader_version: "0.20.1".into(),
+        }
+    }
+    #[test]
+    fn pending_managed_profile_remains_selected_with_recovery_actions_available() {
+        let t = Temp::new();
+        let profile = t.0.join("profile");
+        {
+            let lock = pack::ProfileLock::acquire(&profile).unwrap();
+            pack::apply(
+                &lock,
+                &BTreeMap::new(),
+                &[pack::PackFile {
+                    path: "mods/a.jar".into(),
+                    bytes: b"old".to_vec(),
+                    mutable: false,
+                }],
+                "0.5.0",
+                false,
+                || false,
+            )
+            .unwrap();
+        }
+        fs::write(profile.join(".smb-companion/journal.json"), b"{}").unwrap();
+        let i = Instance {
+            id: "local:pending".into(),
+            directory: profile,
+            imported_version: "0.5.0".into(),
+            ..Default::default()
+        };
+        let config = Settings {
+            instance_id: i.id.clone(),
+            ..Default::default()
+        };
+        let view = Arc::new(Mutex::new(View::default()));
+        let result = publish_discovery(
+            &config,
+            modrinth::Discovery {
+                executable: PathBuf::new(),
+                instances: vec![i.clone()],
+            },
+            &view,
+        );
+        assert!(result.is_err());
+        let v = view.lock().unwrap();
+        assert_eq!(v.selected.as_ref().unwrap().id, i.id);
+        assert_eq!(v.instances.len(), 1);
+        assert!(!v.error.is_empty());
+        assert!(!v.busy);
+    }
+    #[test]
+    fn explicit_update_only_action_checks_even_when_automatic_updates_are_off() {
+        for (automatic, launch_after_update, expected) in [
+            (false, false, true),
+            (false, true, false),
+            (true, false, true),
+            (true, true, true),
+        ] {
+            let config = Settings {
+                automatic,
+                launch_after_update,
+                ..Default::default()
+            };
+            assert_eq!(
+                should_update(&config, Action::Play),
+                expected,
+                "automatic={automatic}, launch_after_update={launch_after_update}"
+            );
+            assert!(should_update(&config, Action::Check));
+            assert!(should_update(&config, Action::Repair));
         }
     }
     #[test]

@@ -36,7 +36,7 @@ Automatic updates, launch after update, and checking direct Modrinth launches ha
 For direct launches, copy the command shown in the app into the instance's **Custom game launch hooks → Pre-launch** field, save, then refresh SMB to verify it. Keep existing custom hooks unchanged. The helper waits for the update, returns a failure code when launch must stop, and never opens or focuses the companion window.
 
 - Updates cover pack-owned mods and defaults. Personal config edits, added mods, worlds and screenshots stay intact. Modified pack-owned mods cause a conflict; missing mods require explicit repair.
-- Minecraft/Fabric runtime changes need a native Modrinth runtime change first. SMB never edits the launcher database or reads account credentials.
+- Minecraft/Fabric runtime changes need a native Modrinth pack migration or a fresh import of the new pack, then selecting that instance in SMB. Changing only the runtime setting cannot migrate the old pack. SMB never edits the launcher database or reads account credentials.
 - Any running Java/Minecraft process defers updates. Interrupted changes are rolled back under an OS lock before another update; a pending recovery blocks launch even when checks are disabled.
 - Native resource-pack synchronization must be off for the selected instance. Native synced options/servers are excluded when first adopting it; enabling overlapping native sync later requires turning it off before further updates.
 - An unavailable channel blocks checked launches. Disable automatic checks explicitly to launch an intact existing pack without checking; interrupted installations still block.
