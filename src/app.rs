@@ -648,7 +648,9 @@ impl eframe::App for Companion {
                         self.automation(ui, &mut config, &status);
                     }
                     self.behaviour(ui, &status);
-                    if !self.minecraft_selected {
+                    if self.minecraft_selected {
+                        self.minecraft.troubleshooting(ui);
+                    } else {
                         self.troubleshooting(ui, ctx, &mut config);
                     }
                     for error in [
@@ -678,7 +680,7 @@ impl eframe::App for Companion {
                             let line = if !self.live {
                                 "Preview · not saved".to_owned()
                             } else if self.minecraft_selected {
-                                "Modrinth instance".to_owned()
+                                self.minecraft.status_line()
                             } else if !config.enabled {
                                 "Automation paused".to_owned()
                             } else if status.last_applied.is_empty() {
@@ -746,36 +748,6 @@ impl Drop for Companion {
     }
 }
 
-fn row(
-    ui: &mut Ui,
-    icon: impl FnOnce(&mut Ui, Rect),
-    title: &str,
-    subtitle: &str,
-    control_width: f32,
-    control: impl FnOnce(&mut Ui),
-) {
-    ui.horizontal(|ui| {
-        let (r, _) = ui.allocate_exact_size(Vec2::splat(30.), Sense::hover());
-        ui.painter().rect(
-            r,
-            2,
-            VOID,
-            Stroke::new(1.0_f32, HAIRLINE),
-            StrokeKind::Inside,
-        );
-        icon(ui, r.shrink(4.));
-        ui.add_space(4.);
-        let w = (ui.available_width() - control_width - 8.).max(120.);
-        ui.vertical(|ui| {
-            ui.set_width(w);
-            ui.spacing_mut().item_spacing.y = 1.;
-            text(ui, title, 14., semibold(), WHITE);
-            text(ui, subtitle, 11.5, FontFamily::Proportional, STEEL);
-        });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), control);
-    });
-}
-
 fn note(ui: &mut Ui, value: &str, on: bool) {
     if on && value == "Could not apply" {
         ui.horizontal(|ui| {
@@ -783,41 +755,6 @@ fn note(ui: &mut Ui, value: &str, on: bool) {
             theme::label(ui, value, PINK);
         });
     }
-}
-
-fn hairline(ui: &mut Ui) {
-    let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.), Sense::hover());
-    ui.painter().rect_filled(r, 0, HAIRLINE);
-}
-
-fn alert(ui: &mut Ui, message: &str) {
-    egui::Frame::new()
-        .fill(Color32::from_rgb(0x22, 0x05, 0x12))
-        .stroke(Stroke::new(1.0_f32, PINK_DEEP))
-        .corner_radius(RADIUS)
-        .inner_margin(egui::Margin::symmetric(14, 12))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(theme::label_job("Heads up", true, WHITE));
-            ui.add_space(4.);
-            body(ui, message, WHITE);
-        });
-}
-
-fn collapse_icon(ui: &mut Ui, openness: f32, response: &egui::Response) {
-    let r = response.rect;
-    let c = r.center();
-    let s = r.width() * 0.3;
-    let rot = openness * std::f32::consts::FRAC_PI_2;
-    let pts = [
-        Vec2::new(-s * 0.5, -s),
-        Vec2::new(s * 0.6, 0.),
-        Vec2::new(-s * 0.5, s),
-    ]
-    .map(|v| c + egui::emath::Rot2::from_angle(rot) * v)
-    .to_vec();
-    ui.painter()
-        .add(egui::Shape::convex_polygon(pts, PINK, Stroke::NONE));
 }
 
 fn full_uv() -> Rect {

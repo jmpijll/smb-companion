@@ -598,3 +598,160 @@ pub fn paint_item(painter: &egui::Painter, rect: Rect, color: Color32) {
         stroke,
     ));
 }
+
+// Shared page building blocks: League and Minecraft use the same rows.
+
+pub fn row(
+    ui: &mut Ui,
+    icon: impl FnOnce(&mut Ui, Rect),
+    title: &str,
+    subtitle: &str,
+    control_width: f32,
+    control: impl FnOnce(&mut Ui),
+) {
+    ui.horizontal(|ui| {
+        let (r, _) = ui.allocate_exact_size(Vec2::splat(30.), Sense::hover());
+        ui.painter().rect(
+            r,
+            2,
+            VOID,
+            Stroke::new(1.0_f32, HAIRLINE),
+            StrokeKind::Inside,
+        );
+        icon(ui, r.shrink(4.));
+        ui.add_space(4.);
+        let w = (ui.available_width() - control_width - 8.).max(120.);
+        ui.vertical(|ui| {
+            ui.set_width(w);
+            ui.spacing_mut().item_spacing.y = 1.;
+            text(ui, title, 14., semibold(), WHITE);
+            text(ui, subtitle, 11.5, FontFamily::Proportional, STEEL);
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), control);
+    });
+}
+
+pub fn hairline(ui: &mut Ui) {
+    let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.), Sense::hover());
+    ui.painter().rect_filled(r, 0, HAIRLINE);
+}
+
+pub fn alert(ui: &mut Ui, message: &str) {
+    egui::Frame::new()
+        .fill(Color32::from_rgb(0x22, 0x05, 0x12))
+        .stroke(Stroke::new(1.0_f32, PINK_DEEP))
+        .corner_radius(RADIUS)
+        .inner_margin(egui::Margin::symmetric(14, 12))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(label_job("Heads up", true, WHITE));
+            ui.add_space(4.);
+            body(ui, message, WHITE);
+        });
+}
+
+pub fn collapse_icon(ui: &mut Ui, openness: f32, response: &egui::Response) {
+    let r = response.rect;
+    let c = r.center();
+    let s = r.width() * 0.3;
+    let rot = openness * std::f32::consts::FRAC_PI_2;
+    let pts = [
+        Vec2::new(-s * 0.5, -s),
+        Vec2::new(s * 0.6, 0.),
+        Vec2::new(-s * 0.5, s),
+    ]
+    .map(|v| c + egui::emath::Rot2::from_angle(rot) * v)
+    .to_vec();
+    ui.painter()
+        .add(egui::Shape::convex_polygon(pts, PINK, Stroke::NONE));
+}
+
+/// Minecraft pack glyph: an isometric block in the house line weight.
+pub fn paint_block(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let s = rect.width() / 28.;
+    let p = |x: f32, y: f32| c + Vec2::new(x, y) * s;
+    let stroke = Stroke::new(1.8_f32, color);
+    painter.add(Shape::closed_line(
+        vec![
+            p(0., -11.),
+            p(10., -5.5),
+            p(10., 6.),
+            p(0., 11.5),
+            p(-10., 6.),
+            p(-10., -5.5),
+        ],
+        stroke,
+    ));
+    painter.add(Shape::line(
+        vec![p(-10., -5.5), p(0., 0.), p(10., -5.5)],
+        stroke,
+    ));
+    painter.add(Shape::line_segment([p(0., 0.), p(0., 11.5)], stroke));
+}
+
+/// Update glyph: two chasing arrows.
+pub fn paint_sync(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let r = rect.width() * 0.32;
+    let stroke = Stroke::new(1.8_f32, color);
+    for start in [0.25_f32, 3.39] {
+        let arc: Vec<Pos2> = (0..=10)
+            .map(|i| {
+                let a = start + i as f32 * 0.24;
+                c + Vec2::angled(a) * r
+            })
+            .collect();
+        let tip = *arc.last().unwrap();
+        let dir = (tip - arc[arc.len() - 2]).normalized();
+        let side = Vec2::new(-dir.y, dir.x);
+        painter.add(Shape::line(arc, stroke));
+        painter.add(Shape::line(
+            vec![
+                tip - dir * 4. + side * 3.5,
+                tip,
+                tip - dir * 4. - side * 3.5,
+            ],
+            stroke,
+        ));
+    }
+}
+
+/// Launch glyph: a play triangle cut at the brand angle.
+pub fn paint_play(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let s = rect.width() / 28.;
+    painter.add(Shape::closed_line(
+        vec![
+            c + Vec2::new(-6., -10.) * s,
+            c + Vec2::new(10., 0.) * s,
+            c + Vec2::new(-6., 10.) * s,
+        ],
+        Stroke::new(1.8_f32, color),
+    ));
+}
+
+/// Launch-hook glyph: two chain links, hooked into each other.
+pub fn paint_hook(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let s = rect.width() / 28.;
+    let stroke = Stroke::new(1.8_f32, color);
+    let turn = egui::emath::Rot2::from_angle(-std::f32::consts::FRAC_PI_4);
+    // A stadium (rounded bar) of half-length `l` and radius `r`, around `at`.
+    let link = |at: Vec2| {
+        let (l, r) = (4.5_f32, 3.6_f32);
+        let mut pts = Vec::new();
+        for (end, from) in [
+            (l, -std::f32::consts::FRAC_PI_2),
+            (-l, std::f32::consts::FRAC_PI_2),
+        ] {
+            for i in 0..=8 {
+                let a = from + i as f32 / 8. * std::f32::consts::PI;
+                pts.push(c + turn * ((at + Vec2::new(end + a.cos() * r, a.sin() * r)) * s));
+            }
+        }
+        Shape::closed_line(pts, stroke)
+    };
+    painter.add(link(Vec2::new(-4.2, 0.)));
+    painter.add(link(Vec2::new(4.2, 0.)));
+}

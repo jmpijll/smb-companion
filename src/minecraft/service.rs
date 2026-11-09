@@ -50,6 +50,9 @@ pub struct View {
 #[derive(Clone, Copy)]
 pub enum Action {
     Discover,
+    /// Background look at Modrinth while something is still missing; it never
+    /// marks the page busy or replaces the status the player is reading.
+    Look,
     Check,
     Play,
     Repair,
@@ -109,8 +112,8 @@ impl Handle {
         let error = loaded.as_ref().err().cloned().unwrap_or_default();
         let mut config = loaded.unwrap_or_default();
         let mut v = View {
-            title: "Choose your SMB instance".into(),
-            detail: "Keep the pack ready before you play.".into(),
+            title: "Waiting for Modrinth".into(),
+            detail: "Import the SMB pack in Modrinth once. We'll find it.".into(),
             error,
             ..Default::default()
         };
@@ -129,8 +132,7 @@ impl Handle {
             v.instances = vec![i.clone()];
             v.selected = Some(i);
             v.title = "Ready when you are".into();
-            v.detail =
-                "Your pack is compatible with the SMB server. Personal settings stay yours.".into();
+            v.detail = "Updates land before you play.".into();
             v.version = "0.13.0".into();
             v.latest = "0.13.0".into();
             v.hook_ready = true;
@@ -142,13 +144,14 @@ impl Handle {
                 .map(String::as_str);
             if state == Some("setup") {
                 v.hook_ready = false;
-                v.title = "One small setup, then play".into();
-                v.detail = "Select your Modrinth instance and add the launch hook once.".into();
+                v.title = "Ready when you are".into();
+                v.detail = "Updates land before you play.".into();
             }
             if state == Some("error") {
                 v.hook_ready = false;
-                v.title = "Pack left untouched".into();
-                v.error="The SMB client channel is unavailable. Check your connection, then try again. No installed files were changed.".into();
+                v.title = "Needs a hand".into();
+                v.detail = "See the note below.".into();
+                v.error = "Can't reach the SMB pack feed. Nothing was changed. Press Play again in a moment.".into();
             }
         }
         let this = Self {
@@ -161,26 +164,30 @@ impl Handle {
             let settings = this.settings.clone();
             let view = this.view.clone();
             std::thread::spawn(move || {
-                let _ = refresh(&settings.lock().unwrap(), &view);
+                let _ = refresh(&settings.lock().unwrap(), &view, false);
                 while let Ok(action) = rx.recv() {
                     let config = settings.lock().unwrap().clone();
-                    {
+                    let quiet = matches!(action, Action::Look);
+                    if !quiet {
                         let mut v = view.lock().unwrap();
                         v.busy = true;
                         v.error.clear();
                         v.title = "Checking your pack".into();
-                        v.detail =
-                            "SMB stays quiet while the selected instance is prepared.".into();
+                        v.detail = "Quick look before anything changes.".into();
                     }
-                    let result = if matches!(action, Action::Discover) {
-                        refresh(&config, &view)
+                    let result = if matches!(action, Action::Discover | Action::Look) {
+                        refresh(&config, &view, quiet)
                     } else {
                         perform(&config, action, &view)
                     };
+                    if quiet {
+                        continue;
+                    }
                     let mut v = view.lock().unwrap();
                     v.busy = false;
                     if let Err(e) = result {
-                        v.title = "Needs your attention".into();
+                        v.title = "Needs a hand".into();
+                        v.detail = "See the note below.".into();
                         v.error = e;
                     }
                 }
@@ -210,24 +217,45 @@ impl Handle {
         }
     }
 }
-fn refresh(config: &Settings, view: &Arc<Mutex<View>>) -> Result<(), String> {
+fn refresh(config: &Settings, view: &Arc<Mutex<View>>, quiet: bool) -> Result<(), String> {
     let d = modrinth::discover().inspect_err(|e| {
-        let mut v = view.lock().unwrap();
-        v.error = e.clone();
-        v.title = "Modrinth setup needed".into();
+        if !quiet {
+            let mut v = view.lock().unwrap();
+            v.error = e.clone();
+            v.title = "Modrinth not found".into();
+        }
     })?;
-    publish_discovery(config, d, view)
+    publish_discovery(config, d, view, quiet)
 }
 fn publish_discovery(
     config: &Settings,
     d: modrinth::Discovery,
     view: &Arc<Mutex<View>>,
+    quiet: bool,
 ) -> Result<(), String> {
     let selected = d
         .instances
         .iter()
         .find(|i| i.id == config.instance_id)
         .cloned();
+    let hook_ready = |i: &Instance| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| modrinth::hook_command(&p).ok())
+            .is_some_and(|h| h == i.pre_launch)
+    };
+    {
+        // A background look with the same instance only refreshes what it
+        // found; the status and any problem on screen stay as they are.
+        let mut v = view.lock().unwrap();
+        let same = v.selected.as_ref().map(|i| &i.id) == selected.as_ref().map(|i| &i.id);
+        if quiet && same && selected.is_some() {
+            v.hook_ready = selected.as_ref().is_some_and(hook_ready);
+            v.instances = d.instances;
+            v.selected = selected;
+            return Ok(());
+        }
+    }
     let managed_result = (|| -> Result<Option<String>, String> {
         Ok(if let Some(i) = &selected {
             if i.directory.join(".smb-companion/state.json").exists() {
@@ -250,31 +278,34 @@ fn publish_discovery(
     v.instances = d.instances;
     v.selected = selected.clone();
     v.error.clear();
-    v.hook_ready = selected.as_ref().is_some_and(|i| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| modrinth::hook_command(&p).ok())
-            .is_some_and(|h| h == i.pre_launch)
-    });
+    v.hook_ready = selected.as_ref().is_some_and(hook_ready);
     // Discovery remains available even when validation requires recovery. The
     // player must be able to select this instance and invoke Check/Repair.
     let managed_version = match managed_result {
         Ok(version) => version,
         Err(e) => {
-            v.title = "Recovery needed".into();
-            v.detail = "Use Check update to recover the interrupted pack before play.".into();
+            v.title = "Update interrupted".into();
+            v.detail = "Check pack finishes it safely.".into();
             v.error = e.clone();
             return Err(e);
         }
     };
     if let Some(i) = selected {
         v.version = managed_version.unwrap_or(i.imported_version);
-        v.title = "Ready to check".into();
-        v.detail = "Play checks the selected pack before handing launch to Modrinth.".into();
+        v.title = "Ready when you are".into();
+        v.detail = "Updates land before you play.".into();
     } else {
         v.version.clear();
-        v.title = "Choose your SMB instance".into();
-        v.detail = "Import the SMB client pack in Modrinth, then select its profile here.".into();
+        v.title = if v.instances.is_empty() {
+            "Waiting for Modrinth".into()
+        } else {
+            "Pick your SMB instance".into()
+        };
+        v.detail = if v.instances.is_empty() {
+            "Import the SMB pack in Modrinth once. We'll find it.".into()
+        } else {
+            "Choose the one you play; only that one is updated.".into()
+        };
     }
     Ok(())
 }
@@ -403,8 +434,8 @@ fn synchronize(
     filter_native(&mut next, i);
     {
         let mut v = view.lock().unwrap();
-        v.title = "Preparing pack files".into();
-        v.detail = "Downloading and verifying before any installed file changes.".into();
+        v.title = "Updating your pack".into();
+        v.detail = "Downloading and checking first.".into();
     }
     let files = source.materialize(&next, &owned, &i.directory)?;
     // Re-read authoritative native profile metadata after downloads, before any mutation.
@@ -425,12 +456,14 @@ fn synchronize(
     let mut v = view.lock().unwrap();
     v.version = chosen.version.clone();
     v.title = "Ready when you are".into();
-    v.detail = format!(
-        "Pack {} · {} files updated · {} personal files preserved",
-        chosen.version,
-        report.written + report.removed,
-        report.preserved
-    );
+    v.detail = if report.written + report.removed == 0 {
+        "Pack checked. Nothing to change.".into()
+    } else {
+        format!(
+            "Updated to {}. Your own changes stayed ({} kept).",
+            chosen.version, report.preserved
+        )
+    };
     Ok(())
 }
 fn perform(config: &Settings, action: Action, view: &Arc<Mutex<View>>) -> Result<(), String> {
@@ -440,8 +473,8 @@ fn perform(config: &Settings, action: Action, view: &Arc<Mutex<View>>) -> Result
     } else {
         ensure_consistent(&i.directory)?;
         let mut v = view.lock().unwrap();
-        v.title = "Automatic updates paused".into();
-        v.detail = "Launching the selected pack without a channel check.".into();
+        v.title = "Updates off".into();
+        v.detail = "Launching the pack as it is.".into();
     }
     if matches!(action, Action::Play) && config.launch_after_update {
         let (_, fresh) = selected(config)?;
@@ -451,8 +484,8 @@ fn perform(config: &Settings, action: Action, view: &Arc<Mutex<View>>) -> Result
         ensure_consistent(&fresh.directory)?;
         modrinth::handoff(&executable, &i.id)?;
         let mut v = view.lock().unwrap();
-        v.title = "Handed to Modrinth".into();
-        v.detail = "Modrinth handles login and game startup. SMB will stay out of the way.".into();
+        v.title = "Over to Modrinth".into();
+        v.detail = "It takes it from here. Have a good one.".into();
     }
     Ok(())
 }
@@ -460,7 +493,7 @@ fn should_update(config: &Settings, action: Action) -> bool {
     match action {
         Action::Check | Action::Repair => true,
         Action::Play => config.automatic || !config.launch_after_update,
-        Action::Discover => false,
+        Action::Discover | Action::Look => false,
     }
 }
 fn ensure_consistent(profile: &Path) -> Result<(), String> {
@@ -702,6 +735,7 @@ mod integration_tests {
                 instances: vec![i.clone()],
             },
             &view,
+            false,
         );
         assert!(result.is_err());
         let v = view.lock().unwrap();
@@ -709,6 +743,52 @@ mod integration_tests {
         assert_eq!(v.instances.len(), 1);
         assert!(!v.error.is_empty());
         assert!(!v.busy);
+    }
+    #[test]
+    fn background_look_keeps_the_status_and_problem_on_screen() {
+        let i = Instance {
+            id: "local:smb".into(),
+            imported_version: "0.13.0".into(),
+            pre_launch: "hook pasted since".into(),
+            ..Default::default()
+        };
+        let config = Settings {
+            instance_id: i.id.clone(),
+            ..Default::default()
+        };
+        let view = Arc::new(Mutex::new(View {
+            selected: Some(Instance {
+                pre_launch: String::new(),
+                ..i.clone()
+            }),
+            title: "Over to Modrinth".into(),
+            error: "Java is running".into(),
+            ..Default::default()
+        }));
+        let found = || modrinth::Discovery {
+            executable: PathBuf::new(),
+            instances: vec![
+                i.clone(),
+                Instance {
+                    id: "local:other".into(),
+                    ..i.clone()
+                },
+            ],
+        };
+        publish_discovery(&config, found(), &view, true).unwrap();
+        {
+            let v = view.lock().unwrap();
+            assert_eq!(v.title, "Over to Modrinth");
+            assert_eq!(v.error, "Java is running");
+            assert_eq!(v.instances.len(), 2);
+            assert_eq!(v.selected.as_ref().unwrap().pre_launch, "hook pasted since");
+            assert!(!v.busy);
+        }
+        // An explicit look does refresh the status.
+        publish_discovery(&config, found(), &view, false).unwrap();
+        let v = view.lock().unwrap();
+        assert_eq!(v.title, "Ready when you are");
+        assert!(v.error.is_empty());
     }
     #[test]
     fn explicit_update_only_action_checks_even_when_automatic_updates_are_off() {

@@ -5,8 +5,8 @@ This is a local review build on `feat/minecraft-companion`. The public client fe
 ## Player flow
 
 1. Import a stable SMB mrpack in Modrinth App 0.23.1 using its normal import UI.
-2. Open the Minecraft page, select that instance by version/folder, and use Play SMB. Updates are synchronous before native launch handoff. Switching off launch after update makes this an update-only action.
-3. For launches directly from Modrinth, paste the shown executable command into the instance's native pre-launch hook once. Refresh in SMB verifies the effective setting. Existing custom hooks are never replaced.
+2. Open the Minecraft page. A single SMB instance is picked automatically; with several, choose one. Use Play. Updates are synchronous before native launch handoff. Switching off launch after update makes this an update-only action.
+3. For launches directly from Modrinth, copy the hook and paste it into the instance's native pre-launch hook once. The companion notices it by itself (a quiet look every few seconds while something is missing). Existing custom hooks are never replaced.
 
 Same Minecraft/Fabric runtime only. When the runtime changes, migrate/import the new pack in native Modrinth, then select that instance in SMB; changing only the runtime setting cannot migrate the old pack. Java/Minecraft activity blocks updates conservatively; the helper has no GUI, notifications or focus calls. A checked offline launch blocks with a useful error; automatic checks can explicitly be disabled for an intact installation.
 
@@ -47,7 +47,7 @@ CLI tests use a disposable APPDATA/Modrinth database and real installed launcher
 
 Opt-in tests (run individually): `minecraft::modrinth::tests::native_discovery_readonly`, `minecraft::service::integration_tests::actual_export_archives_match_channel`, `minecraft::service::integration_tests::actual_export_downloads_stage_only`. The last downloads real client mods into disposable staging only. Set an explicit local channel for the latter two. None launches Minecraft or mutates a real profile.
 
-Actual egui captures are in this directory: [Minecraft ready](ready.png), [native setup](setup.png), [channel error](error.png), [League](league.png). All show synthetic states and are labeled Preview; no real settings/network/launcher actions run in screenshot mode. Default interactive window remains compact and scrolls.
+Actual egui captures are in this directory (compact layout matching the League page: one status card, one panel of switches, the rest under Instance & troubleshooting): [Minecraft ready](ready.png), [native setup](setup.png), [channel error](error.png), [League](league.png). All show synthetic states and are labeled Preview; no real settings/network/launcher actions run in screenshot mode. Default interactive window remains compact and scrolls.
 
 ## Boundaries to validate before broad member rollout
 
