@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "sha256": "8439b2e81f29b1e09d51438bfbb8698c2d9e24caba0c5545fadfdfcda1267e20",
-  "signature": "584b5ee9b464c2d214169d0624c85d5a3609b8e91ebf22a42b2706873441f7c7daac4d6f415958cde939f4ab96f8edeb5a9624913c42a34e1832f9da82126501",
-  "size": 5346141,
-  "url": "https://github.com/jmpijll/smb-companion/releases/download/v0.3.0/smb-lol-v0.3.0-setup.exe",
-  "version": "0.3.0"
+  "sha256": "d9fbad48d7b122a0f881f285d6b492d832337039b927897bb1d9119c63a085a6",
+  "signature": "5cd8533304605b57e86affefb1e14e178fba29f3037b4c8062b309a9d6e62a68d66c7d392cee6277a4608fcb490c8fa2576f7d17116ab2ea004e9a34d471ec09",
+  "size": 6270607,
+  "url": "https://github.com/jmpijll/smb-companion/releases/download/v0.4.0/smb-companion-v0.4.0-setup.exe",
+  "version": "0.4.0"
 }
