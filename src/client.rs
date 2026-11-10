@@ -808,18 +808,14 @@ fn agent(local: bool) -> &'static ureq::Agent {
     }
 }
 
-/// Downloads from this repository's GitHub releases (update checks and
-/// installers). Release assets redirect to GitHub's download host, which is
-/// the only other host accepted.
-pub fn github(url: &str, limit: usize) -> Result<Vec<u8>, String> {
+/// Downloads an update feed or installer over HTTPS. The host is not pinned:
+/// what is installed is decided by the signed feed (`signing.rs`), so a
+/// renamed repository or a moved download keeps working.
+pub fn download(url: &str, limit: usize) -> Result<Vec<u8>, String> {
     use std::{io::Read, time::Duration};
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
-    let allowed = [
-        format!("https://api.github.com/repos/{REPOSITORY}/"),
-        format!("https://github.com/{REPOSITORY}/releases/download/"),
-    ];
-    if !allowed.iter().any(|p| url.starts_with(p.as_str())) {
-        return Err("Updates only come from the companion's own GitHub releases.".into());
+    if !url.starts_with("https://") {
+        return Err("Updates are only downloaded over HTTPS.".into());
     }
     let _ = rustls::crypto::ring::default_provider().install_default();
     let agent = AGENT.get_or_init(|| {
@@ -833,26 +829,9 @@ pub fn github(url: &str, limit: usize) -> Result<Vec<u8>, String> {
     });
     let response = agent
         .get(url)
-        .set(
-            "Accept",
-            "application/vnd.github+json, application/octet-stream",
-        )
+        .set("Accept", "application/json, application/octet-stream")
         .call()
-        .map_err(|e| format!("GitHub did not respond: {e}"))?;
-    let host = response
-        .get_url()
-        .strip_prefix("https://")
-        .and_then(|rest| rest.split(['/', ':']).next())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if !(host == "github.com"
-        || host == "api.github.com"
-        || host.ends_with(".githubusercontent.com"))
-    {
-        return Err(format!(
-            "An update download was redirected to {host}; ignored."
-        ));
-    }
+        .map_err(|e| format!("The update server did not respond: {e}"))?;
     let mut bytes = Vec::new();
     response
         .into_reader()

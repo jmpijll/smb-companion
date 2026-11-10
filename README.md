@@ -71,8 +71,9 @@ Coming from the earlier *Quiet Select* build? Quit it first. This app takes over
 - Rune page slots full? Delete one in the client and the companion takes it from there.
   Nothing of yours gets deleted to make room.
 - Problems retry on their own. **Activity log** (under *Connection & troubleshooting*) shows what happened and when.
-- The installed version checks this repository's GitHub releases once a day. A new installer is checked against
-  `SHA256SUMS.txt` and installed silently when you're not queueing, in champion select, in a game or looking at the window.
+- The installed version checks its update feed once a day (GitHub Pages, with the latest release as a fallback).
+  Only an update signed with the project's release key is installed, so a hijacked GitHub account or download can't push one.
+  It installs silently when you're not queueing, in champion select, in a game or looking at the window.
 - Third-party tools that use the League client API are common (rune importers, stat sites). Use it at your own discretion.
 
 ## Build from source
@@ -81,7 +82,7 @@ Requires Rust (stable, MSVC toolchain) on Windows.
 
 ```sh
 cargo test
-cargo test -- --ignored        # also downloads and verifies the latest release from GitHub
+cargo test -- --ignored        # also checks the live signed update feeds and their installer
 cargo build --release          # target/release/smb-lol.exe
 ```
 
@@ -113,7 +114,17 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
-Builds are unsigned for now. Installed copies pick up a new release by themselves within a day.
+Then ship it to installed copies. On the maintainer's PC, once the release is up:
+
+```powershell
+pwsh packaging\sign-update.ps1 -Tag v0.3.0
+```
+
+This signs the installer with the release key (`~\.smb-companion-release\update-key.pk8`, never in CI) and
+puts the signed `update.json` on GitHub Pages and on the release. Installed copies update silently within a day.
+Keep a backup of that key: installed copies trust only it, so without it, members would have to reinstall by hand.
+
+The exe and installer are not Authenticode-signed yet (SmartScreen warns on a first manual install).
 
 ## Brand
 

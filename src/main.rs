@@ -1,6 +1,7 @@
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 mod app;
 mod client;
+mod signing;
 mod system;
 mod theme;
 mod update;
