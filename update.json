@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "sha256": "d9fbad48d7b122a0f881f285d6b492d832337039b927897bb1d9119c63a085a6",
-  "signature": "5cd8533304605b57e86affefb1e14e178fba29f3037b4c8062b309a9d6e62a68d66c7d392cee6277a4608fcb490c8fa2576f7d17116ab2ea004e9a34d471ec09",
-  "size": 6270607,
-  "url": "https://github.com/jmpijll/smb-companion/releases/download/v0.4.0/smb-companion-v0.4.0-setup.exe",
-  "version": "0.4.0"
+  "sha256": "f6ebef9ffb54b05d1cc6c8238ccb3262396eb401ea5037914d63fa21ed99bc39",
+  "signature": "9160f94a34123a17beeead143bcf67de1c4ec4c12b9b9149d6c942656b6ce2ea7f8ef05fa956997189d2e29c4233335f5ad64f40ff4f3995d8ccf590c2096b06",
+  "size": 6234010,
+  "url": "https://github.com/jmpijll/smb-companion/releases/download/v0.5.0/smb-companion-v0.5.0-setup.exe",
+  "version": "0.5.0"
 }
