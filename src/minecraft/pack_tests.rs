@@ -174,7 +174,8 @@ fn journal_requires_explicit_old_state_and_hash_fields() {
 }
 #[test]
 fn immutable_conflicts_and_unowned_collisions_fail_before_any_change() {
-    for owned in [true, false] {
+    // An owned, changed mod waits for Repair; an unowned file is never replaced.
+    for (owned, repair) in [(true, false), (false, true)] {
         let t = Temp::new();
         t.write("mods/z.jar", b"personal");
         let lock = t.lock();
@@ -191,7 +192,7 @@ fn immutable_conflicts_and_unowned_collisions_fail_before_any_change() {
                 file("mods/z.jar", "new", false)
             ],
             "1.0.0",
-            true,
+            repair,
             || false
         )
         .is_err());
@@ -202,16 +203,78 @@ fn immutable_conflicts_and_unowned_collisions_fail_before_any_change() {
     }
 }
 #[test]
-fn missing_immutable_requires_explicit_repair() {
+fn missing_pack_files_come_back_unless_disabled_in_modrinth() {
+    let t = Temp::new();
+    let lock = t.lock();
+    let files = [
+        file("mods/a.jar", "old", false),
+        file("mods/b.jar", "old", false),
+    ];
+    apply(&lock, &BTreeMap::new(), &files, "1.0.0", false, || false).unwrap();
+    fs::remove_file(t.0.join("mods/a.jar")).unwrap();
+    // Modrinth's "disable" renames the jar.
+    fs::rename(t.0.join("mods/b.jar"), t.0.join("mods/b.jar.disabled")).unwrap();
+    let baseline = owned_files(&lock).unwrap();
+    apply(&lock, &baseline, &files, "1.0.0", false, || false).unwrap();
+    assert_eq!(t.read("mods/a.jar"), b"old");
+    assert!(!t.0.join("mods/b.jar").exists());
+    assert_eq!(t.read("mods/b.jar.disabled"), b"old");
+}
+#[test]
+fn repair_replaces_a_changed_pack_mod() {
     let t = Temp::new();
     let lock = t.lock();
     let files = [file("mods/a.jar", "old", false)];
     apply(&lock, &BTreeMap::new(), &files, "1.0.0", false, || false).unwrap();
-    fs::remove_file(t.0.join("mods/a.jar")).unwrap();
+    t.write("mods/a.jar", b"changed");
     let baseline = owned_files(&lock).unwrap();
     assert!(apply(&lock, &baseline, &files, "1.0.0", false, || false).is_err());
     apply(&lock, &baseline, &files, "1.0.0", true, || false).unwrap();
     assert_eq!(t.read("mods/a.jar"), b"old");
+}
+#[test]
+fn shader_settings_written_by_the_game_stay_the_players() {
+    let t = Temp::new();
+    let lock = t.lock();
+    let path = "shaderpacks/Complementary.zip.txt";
+    assert!(crate::minecraft::channel::mutable_path(path));
+    apply(
+        &lock,
+        &BTreeMap::new(),
+        &[file(path, "default", true)],
+        "1.0.0",
+        false,
+        || false,
+    )
+    .unwrap();
+    t.write(path, b"player");
+    let baseline = owned_files(&lock).unwrap();
+    apply(
+        &lock,
+        &baseline,
+        &[file(path, "new default", true)],
+        "1.1.0",
+        false,
+        || false,
+    )
+    .unwrap();
+    assert_eq!(t.read(path), b"player");
+}
+#[test]
+fn a_file_already_matching_the_pack_is_adopted() {
+    let t = Temp::new();
+    let lock = t.lock();
+    t.write("mods/a.jar", b"same");
+    apply(
+        &lock,
+        &BTreeMap::new(),
+        &[file("mods/a.jar", "same", false)],
+        "1.0.0",
+        false,
+        || false,
+    )
+    .unwrap();
+    assert_eq!(owned_files(&lock).unwrap()["mods/a.jar"], hash(b"same"));
 }
 #[test]
 fn busy_defers_before_mutation() {

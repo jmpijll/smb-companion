@@ -46,7 +46,7 @@ impl Settings {
             .ok()
             .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
         {
-            s.enabled = v["enabled"].as_bool().unwrap_or(true);
+            // "enabled" (the old Pause) is no longer read: the switches say it all.
             s.runes = v["runes"].as_bool().unwrap_or(true);
             s.spells = v["spells"].as_bool().unwrap_or(true);
             s.items = v["items"].as_bool().unwrap_or(false);

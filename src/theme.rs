@@ -138,10 +138,6 @@ pub fn text(
     )
 }
 
-pub fn body(ui: &mut Ui, value: impl Into<String>, color: Color32) -> Response {
-    text(ui, value, 12.5, FontFamily::Proportional, color)
-}
-
 /// §9.6/§9.7: uppercase, wide-tracked label, optionally prefixed by `//`.
 pub fn label_job(value: &str, slashes: bool, color: Color32) -> LayoutJob {
     let mut job = LayoutJob::default();
@@ -161,12 +157,6 @@ pub fn label_job(value: &str, slashes: bool, color: Color32) -> LayoutJob {
 
 pub fn label(ui: &mut Ui, value: &str, color: Color32) -> Response {
     ui.label(label_job(value, false, color))
-}
-
-pub fn section(ui: &mut Ui, value: &str) {
-    ui.add_space(12.);
-    ui.label(label_job(value, true, STEEL));
-    ui.add_space(6.);
 }
 
 /// §17.4/§17.7: Carbon panel, 1px low-opacity pink border, small radius.
@@ -383,12 +373,23 @@ pub fn keycap(ui: &mut Ui, key: &str, selected: bool, size: Vec2) -> Response {
 
 /// Primary (pink, black text) or secondary (outline) action button (§17.5).
 pub fn button(ui: &mut Ui, label: &str, primary: bool) -> Response {
+    let enabled = ui.is_enabled();
+    button_if(ui, label, primary, enabled)
+}
+
+/// A button that is greyed out and ignores clicks unless `enabled`, without a
+/// nested scope (which would break a wrapping row of buttons).
+pub fn button_if(ui: &mut Ui, label: &str, primary: bool, enabled: bool) -> Response {
     let galley =
         ui.painter()
             .layout_no_wrap(label.to_uppercase(), FontId::new(11.5, semibold()), WHITE);
     let size = Vec2::new(galley.size().x + 28. + 1.6 * 11.5, 30.);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    let enabled = ui.is_enabled();
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(size, sense);
     let hovered = response.hovered() && enabled;
     let (fill, stroke, ink) = match (primary, hovered) {
         (true, false) => (PINK, PINK, VOID),
@@ -621,12 +622,20 @@ pub fn row(
         icon(ui, r.shrink(4.));
         ui.add_space(4.);
         let w = (ui.available_width() - control_width - 8.).max(120.);
-        ui.vertical(|ui| {
-            ui.set_width(w);
-            ui.spacing_mut().item_spacing.y = 1.;
-            text(ui, title, 14., semibold(), WHITE);
-            text(ui, subtitle, 11.5, FontFamily::Proportional, STEEL);
-        });
+        if subtitle.is_empty() {
+            ui.allocate_ui_with_layout(
+                Vec2::new(w, 30.),
+                egui::Layout::left_to_right(Align::Center),
+                |ui| text(ui, title, 14., semibold(), WHITE),
+            );
+        } else {
+            ui.vertical(|ui| {
+                ui.set_width(w);
+                ui.spacing_mut().item_spacing.y = 1.;
+                text(ui, title, 14., semibold(), WHITE);
+                text(ui, subtitle, 11.5, FontFamily::Proportional, STEEL);
+            });
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), control);
     });
 }
@@ -636,18 +645,60 @@ pub fn hairline(ui: &mut Ui) {
     ui.painter().rect_filled(r, 0, HAIRLINE);
 }
 
-pub fn alert(ui: &mut Ui, message: &str) {
-    egui::Frame::new()
-        .fill(Color32::from_rgb(0x22, 0x05, 0x12))
-        .stroke(Stroke::new(1.0_f32, PINK_DEEP))
-        .corner_radius(RADIUS)
-        .inner_margin(egui::Margin::symmetric(14, 12))
+/// A page's state: a status dot and one or two words, large. `action` sits
+/// on the right of the same line (Play, Install).
+pub fn headline<R>(ui: &mut Ui, title: &str, on: bool, action: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.horizontal(|ui| {
+        let (r, _) = ui.allocate_exact_size(Vec2::new(12., 30.), Sense::hover());
+        if on {
+            ui.painter()
+                .circle_filled(r.center(), 6., PINK.gamma_multiply(0.25));
+        }
+        ui.painter()
+            .circle_filled(r.center(), 3.5, if on { PINK } else { STEEL_DIM });
+        ui.add_space(2.);
+        text(
+            ui,
+            title.to_uppercase(),
+            28.,
+            display(),
+            if on { WHITE } else { STEEL },
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), action)
+            .inner
+    })
+    .inner
+}
+
+/// Everything a player rarely needs, folded away. A pink dot on the header is
+/// the only sign of a problem.
+pub fn advanced(ui: &mut Ui, id: &str, problem: bool, add: impl FnOnce(&mut Ui)) {
+    ui.add_space(10.);
+    let header = egui::CollapsingHeader::new(label_job("Advanced", false, STEEL))
+        .id_salt(id)
+        // Screenshots of the folded-away part (development aid).
+        .default_open(std::env::args().any(|a| a == "--advanced"))
+        .icon(collapse_icon)
         .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(label_job("Heads up", true, WHITE));
-            ui.add_space(4.);
-            body(ui, message, WHITE);
-        });
+            ui.spacing_mut().item_spacing.y = 6.;
+            add(ui)
+        })
+        .header_response
+        .rect;
+    if problem {
+        ui.painter().circle_filled(
+            egui::pos2(header.right() - 6., header.center().y),
+            3.5,
+            PINK,
+        );
+    }
+}
+
+/// A problem, inside Advanced only.
+pub fn problem(ui: &mut Ui, message: &str) {
+    if !message.is_empty() {
+        text(ui, message, 11.5, FontFamily::Proportional, PINK_HIGHLIGHT);
+    }
 }
 
 pub fn collapse_icon(ui: &mut Ui, openness: f32, response: &egui::Response) {
@@ -664,30 +715,6 @@ pub fn collapse_icon(ui: &mut Ui, openness: f32, response: &egui::Response) {
     .to_vec();
     ui.painter()
         .add(egui::Shape::convex_polygon(pts, PINK, Stroke::NONE));
-}
-
-/// Minecraft pack glyph: an isometric block in the house line weight.
-pub fn paint_block(painter: &egui::Painter, rect: Rect, color: Color32) {
-    let c = rect.center();
-    let s = rect.width() / 28.;
-    let p = |x: f32, y: f32| c + Vec2::new(x, y) * s;
-    let stroke = Stroke::new(1.8_f32, color);
-    painter.add(Shape::closed_line(
-        vec![
-            p(0., -11.),
-            p(10., -5.5),
-            p(10., 6.),
-            p(0., 11.5),
-            p(-10., 6.),
-            p(-10., -5.5),
-        ],
-        stroke,
-    ));
-    painter.add(Shape::line(
-        vec![p(-10., -5.5), p(0., 0.), p(10., -5.5)],
-        stroke,
-    ));
-    painter.add(Shape::line_segment([p(0., 0.), p(0., 11.5)], stroke));
 }
 
 /// Update glyph: two chasing arrows.
@@ -715,43 +742,4 @@ pub fn paint_sync(painter: &egui::Painter, rect: Rect, color: Color32) {
             stroke,
         ));
     }
-}
-
-/// Launch glyph: a play triangle cut at the brand angle.
-pub fn paint_play(painter: &egui::Painter, rect: Rect, color: Color32) {
-    let c = rect.center();
-    let s = rect.width() / 28.;
-    painter.add(Shape::closed_line(
-        vec![
-            c + Vec2::new(-6., -10.) * s,
-            c + Vec2::new(10., 0.) * s,
-            c + Vec2::new(-6., 10.) * s,
-        ],
-        Stroke::new(1.8_f32, color),
-    ));
-}
-
-/// Launch-hook glyph: two chain links, hooked into each other.
-pub fn paint_hook(painter: &egui::Painter, rect: Rect, color: Color32) {
-    let c = rect.center();
-    let s = rect.width() / 28.;
-    let stroke = Stroke::new(1.8_f32, color);
-    let turn = egui::emath::Rot2::from_angle(-std::f32::consts::FRAC_PI_4);
-    // A stadium (rounded bar) of half-length `l` and radius `r`, around `at`.
-    let link = |at: Vec2| {
-        let (l, r) = (4.5_f32, 3.6_f32);
-        let mut pts = Vec::new();
-        for (end, from) in [
-            (l, -std::f32::consts::FRAC_PI_2),
-            (-l, std::f32::consts::FRAC_PI_2),
-        ] {
-            for i in 0..=8 {
-                let a = from + i as f32 / 8. * std::f32::consts::PI;
-                pts.push(c + turn * ((at + Vec2::new(end + a.cos() * r, a.sin() * r)) * s));
-            }
-        }
-        Shape::closed_line(pts, stroke)
-    };
-    painter.add(link(Vec2::new(-4.2, 0.)));
-    painter.add(link(Vec2::new(4.2, 0.)));
 }

@@ -23,7 +23,6 @@ const CHANNEL: &str = "https://sexymaarbescheiden.nl/minecraft/stable.json";
 pub struct Settings {
     pub instance_id: String,
     pub automatic: bool,
-    pub launch_after_update: bool,
     pub direct_hook: bool,
 }
 impl Default for Settings {
@@ -31,7 +30,6 @@ impl Default for Settings {
         Self {
             instance_id: String::new(),
             automatic: true,
-            launch_after_update: true,
             direct_hook: true,
         }
     }
@@ -41,8 +39,8 @@ pub struct View {
     pub instances: Vec<Instance>,
     pub selected: Option<Instance>,
     pub busy: bool,
+    /// What is happening while busy, in a word.
     pub title: String,
-    pub detail: String,
     pub version: String,
     pub latest: String,
     pub hook_ready: bool,
@@ -51,6 +49,48 @@ pub struct View {
     pub installing: bool,
     /// Modrinth App is not installed in its standard folder.
     pub modrinth_missing: bool,
+    /// Play handed the game to Modrinth at this moment.
+    pub launched: Option<Instant>,
+    /// Modrinth has been looked at at least once.
+    pub discovered: bool,
+}
+
+impl View {
+    /// The page's state in a word or two. Problems stay under Advanced.
+    pub fn headline(&self) -> String {
+        if self.busy {
+            return if self.title.is_empty() {
+                "Checking"
+            } else {
+                &self.title
+            }
+            .into();
+        }
+        let newer = |a: &str, b: &str| match (channel::version(a), channel::version(b)) {
+            (Ok(a), Ok(b)) => a > b,
+            _ => false,
+        };
+        match &self.selected {
+            _ if self.modrinth_missing => "Get Modrinth",
+            Some(i) if !i.ready => "Installing",
+            Some(_)
+                if self
+                    .launched
+                    .is_some_and(|t| t.elapsed() < Duration::from_secs(10)) =>
+            {
+                "Launching"
+            }
+            Some(_) if self.installing => "Confirm in Modrinth",
+            Some(_) if newer(&self.latest, &self.version) => "Update ready",
+            Some(_) if self.latest.is_empty() => "Ready",
+            Some(_) => "Up to date",
+            None if self.installing => "Confirm in Modrinth",
+            None if !self.discovered => "Connecting",
+            None if !self.error.is_empty() => "Not connected",
+            None => "Not installed",
+        }
+        .into()
+    }
 }
 #[derive(Clone, Copy)]
 pub enum Action {
@@ -122,8 +162,6 @@ impl Handle {
         let error = loaded.as_ref().err().cloned().unwrap_or_default();
         let mut config = loaded.unwrap_or_default();
         let mut v = View {
-            title: "Waiting for Modrinth".into(),
-            detail: "Import the SMB pack in Modrinth once. We'll find it.".into(),
             error,
             ..Default::default()
         };
@@ -140,10 +178,9 @@ impl Handle {
                 ..Default::default()
             };
             config.instance_id = i.id.clone();
+            v.discovered = true;
             v.instances = vec![i.clone()];
             v.selected = Some(i);
-            v.title = "Ready when you are".into();
-            v.detail = "Updates land before you play.".into();
             v.version = "0.13.0".into();
             v.latest = "0.13.0".into();
             v.hook_ready = true;
@@ -158,21 +195,18 @@ impl Handle {
                 v.selected = None;
                 v.version.clear();
                 v.modrinth_missing = true;
-                v.title = "Get Modrinth first".into();
-                v.detail = "The free launcher SMB plays through. We'll take it from there.".into();
             }
             if state == Some("install") {
                 v.instances.clear();
                 v.selected = None;
                 v.version.clear();
-                v.title = "Get SMB in Modrinth".into();
-                v.detail = "One click. Modrinth asks you to confirm once.".into();
+            }
+            if state == Some("update") {
+                v.latest = "0.14.0".into();
             }
             if state == Some("error") {
                 v.hook_ready = false;
-                v.title = "Needs a hand".into();
-                v.detail = "See the note below.".into();
-                v.error = "Can't reach the SMB pack feed. Nothing was changed. Press Play again in a moment.".into();
+                v.error = "Can't reach the SMB pack feed. Nothing was changed.".into();
             }
         }
         let this = Self {
@@ -202,6 +236,7 @@ impl Handle {
             });
             std::thread::spawn(move || {
                 let _ = refresh(&settings.lock().unwrap(), &view, false);
+                remember_choice(&settings, &view);
                 while let Ok(action) = rx.recv() {
                     let config = settings.lock().unwrap().clone();
                     let quiet = matches!(action, Action::Look | Action::Background);
@@ -209,8 +244,7 @@ impl Handle {
                         let mut v = view.lock().unwrap();
                         v.busy = true;
                         v.error.clear();
-                        v.title = "Checking your pack".into();
-                        v.detail = "Quick look before anything changes.".into();
+                        v.title = "Checking".into();
                     }
                     let result = match action {
                         Action::Discover | Action::Look => refresh(&config, &view, quiet),
@@ -218,23 +252,36 @@ impl Handle {
                         Action::Background => background(&config, &view),
                         _ => perform(&config, action, &view),
                     };
-                    let mut v = view.lock().unwrap();
-                    v.busy = false;
-                    if quiet {
-                        if let (Action::Background, Err(e)) = (action, &result) {
-                            system::log(&format!("Minecraft pack check skipped: {e}"));
+                    {
+                        let mut v = view.lock().unwrap();
+                        v.busy = false;
+                        match (&result, quiet) {
+                            (Err(e), true) if matches!(action, Action::Background) => {
+                                system::log(&format!("Minecraft pack check skipped: {e}"));
+                            }
+                            (Err(e), false) => {
+                                system::log(&format!("Minecraft: {e}"));
+                                v.error = e.clone();
+                            }
+                            _ => {}
                         }
-                        continue;
                     }
-                    if let Err(e) = result {
-                        v.title = "Needs a hand".into();
-                        v.detail = "See the note below.".into();
-                        v.error = e;
-                    }
+                    remember_choice(&settings, &view);
                 }
             });
         }
         this
+    }
+    /// A page over a fixed view, for layout tests.
+    #[cfg(test)]
+    pub fn with_view(view: View) -> Self {
+        let (tx, _) = mpsc::sync_channel(1);
+        Self {
+            settings: Default::default(),
+            view: Arc::new(Mutex::new(view)),
+            tx,
+            live: false,
+        }
     }
     pub fn snapshot(&self) -> View {
         self.view.lock().unwrap().clone()
@@ -258,25 +305,61 @@ impl Handle {
         }
     }
 }
+/// The instance the companion settled on (the newest SMB one, unless the
+/// player picked another under Advanced) is remembered for the launch hook.
+fn remember_choice(settings: &Arc<Mutex<Settings>>, view: &Arc<Mutex<View>>) {
+    let Some(id) = view.lock().unwrap().selected.as_ref().map(|i| i.id.clone()) else {
+        return;
+    };
+    let mut s = settings.lock().unwrap();
+    if s.instance_id != id {
+        s.instance_id = id;
+        if let Err(e) = save(&s) {
+            system::log(&format!("Minecraft settings not saved: {e}"));
+        }
+    }
+}
+
+/// The newest SMB pack in Modrinth is the one kept current; among equals,
+/// the one used before. A pack for a new Minecraft version arrives as a new
+/// instance, so this follows it without asking.
+fn choose<'a>(instances: &'a [Instance], id: &str) -> Option<&'a Instance> {
+    instances.iter().max_by_key(|i| {
+        (
+            i.ready,
+            channel::version(&i.imported_version).unwrap_or_default(),
+            i.id == id,
+        )
+    })
+}
+
 fn refresh(config: &Settings, view: &Arc<Mutex<View>>, quiet: bool) -> Result<(), String> {
     let missing = modrinth::missing();
-    view.lock().unwrap().modrinth_missing = missing;
+    {
+        let mut v = view.lock().unwrap();
+        v.modrinth_missing = missing;
+        v.discovered = true;
+    }
     if missing {
         let mut v = view.lock().unwrap();
         v.instances.clear();
         v.selected = None;
-        v.title = "Get Modrinth first".into();
-        v.detail = "The free launcher SMB plays through. We'll take it from there.".into();
         return Ok(());
     }
     let d = modrinth::discover().inspect_err(|e| {
         if !quiet {
-            let mut v = view.lock().unwrap();
-            v.error = e.clone();
-            v.title = "Modrinth not found".into();
+            view.lock().unwrap().error = e.clone();
         }
     })?;
-    publish_discovery(config, d, view, quiet)
+    publish_discovery(config, d, view, quiet)?;
+    if !quiet {
+        // Just the small feed, so the page can say whether an update waits.
+        let cache = system::data_dir().join("minecraft-cache");
+        if let Ok(channel) = Source::new(channel_location(), cache).channel() {
+            view.lock().unwrap().latest = channel.pack.version;
+        }
+    }
+    Ok(())
 }
 
 /// One click: the latest verified stable pack goes to Modrinth, which
@@ -284,11 +367,7 @@ fn refresh(config: &Settings, view: &Arc<Mutex<View>>, quiet: bool) -> Result<()
 /// picks the new instance up by itself.
 fn install(view: &Arc<Mutex<View>>) -> Result<(), String> {
     let executable = modrinth::executable()?;
-    {
-        let mut v = view.lock().unwrap();
-        v.title = "Getting the SMB pack".into();
-        v.detail = "Downloading and checking first.".into();
-    }
+    view.lock().unwrap().title = "Downloading".into();
     let cache = system::data_dir().join("minecraft-cache");
     let source = Source::new(channel_location(), cache.clone());
     let channel = source.channel()?;
@@ -307,15 +386,13 @@ fn install(view: &Arc<Mutex<View>>) -> Result<(), String> {
     let mut v = view.lock().unwrap();
     v.installing = true;
     v.latest = channel.pack.version.clone();
-    v.title = "Confirm in Modrinth".into();
-    v.detail = "It asks once, because SMB isn't hosted on Modrinth.".into();
     Ok(())
 }
 
 /// Scheduled, quiet: only runs with updates on, Minecraft closed and the
 /// selected instance installed, and only writes when the server needs it.
 fn background(config: &Settings, view: &Arc<Mutex<View>>) -> Result<(), String> {
-    if !config.automatic || config.instance_id.is_empty() || system::minecraft_running() {
+    if !config.automatic || system::minecraft_running() {
         return Ok(());
     }
     let (_, i) = selected(config)?;
@@ -334,11 +411,7 @@ fn publish_discovery(
     view: &Arc<Mutex<View>>,
     quiet: bool,
 ) -> Result<(), String> {
-    let selected = d
-        .instances
-        .iter()
-        .find(|i| i.id == config.instance_id)
-        .cloned();
+    let selected = choose(&d.instances, &config.instance_id).cloned();
     let hook_ready = |i: &Instance| {
         std::env::current_exe()
             .ok()
@@ -363,10 +436,9 @@ fn publish_discovery(
             if i.directory.join(".smb-companion/state.json").exists() {
                 let lock = pack::ProfileLock::acquire(&i.directory)?;
                 if pack::has_pending(&i.directory)? {
-                    return Err(
-                        "An update was interrupted. Check pack, under troubleshooting, finishes it."
-                            .into(),
-                    );
+                    // Finished safely by the next update (Play or the
+                    // background check); nothing for the player to do.
+                    return Ok(None);
                 }
                 pack::load_version(&lock)?
             } else {
@@ -377,6 +449,7 @@ fn publish_discovery(
         })
     })();
     let mut v = view.lock().unwrap();
+    v.discovered = true;
     v.instances = d.instances;
     v.selected = selected.clone();
     v.error.clear();
@@ -386,48 +459,22 @@ fn publish_discovery(
     v.hook_ready = selected.as_ref().is_some_and(hook_ready);
     // Discovery remains available even when validation requires recovery. The
     // player must be able to select this instance and invoke Check/Repair.
-    let managed_version = match managed_result {
-        Ok(version) => version,
-        Err(e) => {
-            v.title = "Update interrupted".into();
-            v.detail = "Check pack finishes it safely.".into();
-            v.error = e.clone();
-            return Err(e);
-        }
-    };
-    if let Some(i) = selected.as_ref().filter(|i| !i.ready) {
-        v.version = i.imported_version.clone();
-        v.title = "Modrinth is installing SMB".into();
-        v.detail = "Almost there. This takes a minute.".into();
-    } else if let Some(i) = selected {
+    let managed_version = managed_result.unwrap_or_else(|e| {
+        v.error = e;
+        None
+    });
+    if let Some(i) = selected {
         v.version = managed_version.unwrap_or(i.imported_version);
-        v.title = "Ready when you are".into();
-        v.detail = "Updates land before you play.".into();
-    } else if v.installing {
-        v.title = "Confirm in Modrinth".into();
-        v.detail = "It asks once, because SMB isn't hosted on Modrinth.".into();
-    } else {
+    } else if !v.installing {
         v.version.clear();
-        v.title = if v.instances.is_empty() {
-            "Get SMB in Modrinth".into()
-        } else {
-            "Pick your SMB instance".into()
-        };
-        v.detail = if v.instances.is_empty() {
-            "One click. Modrinth asks you to confirm once.".into()
-        } else {
-            "Choose the one you play; only that one is updated.".into()
-        };
     }
     Ok(())
 }
 fn selected(config: &Settings) -> Result<(PathBuf, Instance), String> {
     let d = modrinth::discover()?;
-    let i = d
-        .instances
-        .into_iter()
-        .find(|i| i.id == config.instance_id)
-        .ok_or("Select your SMB instance in the companion first")?;
+    let i = choose(&d.instances, &config.instance_id)
+        .cloned()
+        .ok_or("No SMB instance in Modrinth yet")?;
     Ok((d.executable, i))
 }
 fn target<'a>(
@@ -435,19 +482,24 @@ fn target<'a>(
     installed: &str,
     explicit: bool,
 ) -> Result<Option<&'a PackRef>, String> {
+    // Always the latest stable pack; Repair re-applies it. Never a downgrade.
     let installed = channel::version(installed)?;
     let latest = channel::version(&channel.pack.version)?;
-    if installed > latest
-        || (!explicit && installed >= channel::version(&channel.pack.min_version)?)
-    {
+    if installed > latest || (!explicit && installed == latest) {
         Ok(None)
     } else {
         Ok(Some(&channel.pack))
     }
 }
+/// Start of the error for a pack on a newer Minecraft or loader: Modrinth
+/// has to install that one as a new instance (Play does it).
+const NEW_RUNTIME: &str = "New Minecraft version";
 fn runtime(i: &Instance, r: &PackRef) -> Result<(), String> {
     if i.minecraft != r.minecraft || i.loader != r.loader || i.loader_version != r.loader_version {
-        return Err(format!("This pack needs Minecraft {} / Fabric {}. Import the new pack as a native Modrinth instance, then select it in SMB. Automatic updates only support the same runtime; no pack files were changed.",r.minecraft,r.loader_version));
+        return Err(format!(
+            "{NEW_RUNTIME}: SMB {} needs Minecraft {} with {} {}; Play installs it in Modrinth",
+            r.version, r.minecraft, r.loader, r.loader_version
+        ));
     }
     Ok(())
 }
@@ -554,8 +606,7 @@ fn synchronize(
     {
         let mut v = view.lock().unwrap();
         v.busy = true;
-        v.title = "Updating your pack".into();
-        v.detail = "Downloading and checking first.".into();
+        v.title = "Updating".into();
     }
     let files = source.materialize(&next, &owned, &i.directory)?;
     // Re-read authoritative native profile metadata after downloads, before any mutation.
@@ -573,51 +624,43 @@ fn synchronize(
         );
     }
     let report = pack::apply(&lock, &owned, &files, &chosen.version, explicit, busy)?;
-    let mut v = view.lock().unwrap();
-    v.version = chosen.version.clone();
-    v.title = "Ready when you are".into();
-    v.detail = if report.written + report.removed == 0 {
-        "Pack checked. Nothing to change.".into()
-    } else {
-        format!(
-            "Updated to {}. Your own changes stayed ({} kept).",
-            chosen.version, report.preserved
-        )
-    };
+    if report.written + report.removed > 0 {
+        system::log(&format!(
+            "Minecraft pack updated to {} ({} written, {} removed, {} kept as the player left them).",
+            chosen.version, report.written, report.removed, report.preserved
+        ));
+    }
+    view.lock().unwrap().version = chosen.version.clone();
     Ok(())
 }
 fn perform(config: &Settings, action: Action, view: &Arc<Mutex<View>>) -> Result<(), String> {
     let (executable, i) = selected(config)?;
     if !i.ready {
-        return Err("Modrinth is still installing SMB. Give it a minute.".into());
+        return Err("Modrinth is still installing SMB".into());
     }
-    if should_update(config, action) {
-        update_profile(config, &i, matches!(action, Action::Repair), false, view)?;
-    } else {
-        ensure_consistent(&i.directory)?;
-        let mut v = view.lock().unwrap();
-        v.title = "Updates off".into();
-        v.detail = "Launching the pack as it is.".into();
+    if !matches!(action, Action::Play) {
+        return update_profile(config, &i, matches!(action, Action::Repair), false, view);
     }
-    if matches!(action, Action::Play) && config.launch_after_update {
-        let (_, fresh) = selected(config)?;
-        if fresh.directory != i.directory {
-            return Err("Your selected Modrinth profile changed. Refresh before launching.".into());
+    // Play: bring the pack up to date, then hand over to Modrinth. An update
+    // that can't run now never stands between the player and the game.
+    if config.automatic {
+        match update_profile(config, &i, false, false, view) {
+            Ok(()) => {}
+            Err(e) if e.starts_with(NEW_RUNTIME) => return install(view),
+            Err(e) => {
+                system::log(&format!("Minecraft pack not updated before play: {e}"));
+                view.lock().unwrap().error = e;
+            }
         }
-        ensure_consistent(&fresh.directory)?;
-        modrinth::handoff(&executable, &i.id)?;
-        let mut v = view.lock().unwrap();
-        v.title = "Over to Modrinth".into();
-        v.detail = "It takes it from here. Have a good one.".into();
     }
+    let (_, fresh) = selected(config)?;
+    if fresh.directory != i.directory {
+        return Err("The SMB instance in Modrinth changed; press Play again".into());
+    }
+    ensure_consistent(&fresh.directory)?;
+    modrinth::handoff(&executable, &i.id)?;
+    view.lock().unwrap().launched = Some(Instant::now());
     Ok(())
-}
-fn should_update(config: &Settings, action: Action) -> bool {
-    match action {
-        Action::Check | Action::Repair => true,
-        Action::Play => config.automatic || !config.launch_after_update,
-        Action::Discover | Action::Look | Action::Install | Action::Background => false,
-    }
 }
 fn ensure_consistent(profile: &Path) -> Result<(), String> {
     if pack::has_pending(profile)? {
@@ -704,13 +747,17 @@ mod tests {
         }
     }
     #[test]
-    fn server_only_release_retains_compatible_pack_and_never_downgrades() {
+    fn always_the_latest_pack_and_never_a_downgrade() {
         let c = Channel {
             schema: 1,
             pack: reference("0.13.0", "0.11.0"),
             history: vec![],
         };
-        assert!(target(&c, "0.11.0", false).unwrap().is_none());
+        assert_eq!(
+            target(&c, "0.11.0", false).unwrap().unwrap().version,
+            "0.13.0"
+        );
+        assert!(target(&c, "0.13.0", false).unwrap().is_none());
         assert_eq!(
             target(&c, "0.5.0", false).unwrap().unwrap().version,
             "0.13.0"
@@ -730,7 +777,27 @@ mod tests {
         assert!(runtime(&i, &reference("0.13.0", "0.11.0")).is_ok());
         let mut r = reference("0.13.0", "0.11.0");
         r.minecraft = "26.4".into();
-        assert!(runtime(&i, &r).is_err());
+        assert!(runtime(&i, &r).unwrap_err().starts_with(NEW_RUNTIME));
+    }
+    #[test]
+    fn the_newest_smb_instance_is_kept_current() {
+        let at = |id: &str, version: &str, ready: bool| Instance {
+            id: id.into(),
+            imported_version: version.into(),
+            ready,
+            ..Default::default()
+        };
+        let found = [
+            at("local:old", "0.5.0", true),
+            at("local:main", "0.17.0", true),
+            at("local:copy", "0.17.0", true),
+            at("local:installing", "0.18.0", false),
+        ];
+        assert_eq!(choose(&found, "").unwrap().id, "local:copy");
+        assert_eq!(choose(&found, "local:main").unwrap().id, "local:main");
+        // An older pick gives way to a newer pack (a new Minecraft version).
+        assert_eq!(choose(&found, "local:old").unwrap().id, "local:copy");
+        assert!(choose(&[], "local:main").is_none());
     }
     #[test]
     fn native_sync_excludes_both_old_and_new_ownership() {
@@ -866,11 +933,12 @@ mod integration_tests {
             &view,
             false,
         );
-        assert!(result.is_err());
+        // The next update finishes it; nothing is put in front of the player.
+        assert!(result.is_ok());
         let v = view.lock().unwrap();
         assert_eq!(v.selected.as_ref().unwrap().id, i.id);
         assert_eq!(v.instances.len(), 1);
-        assert!(!v.error.is_empty());
+        assert!(v.error.is_empty());
         assert!(!v.busy);
     }
     #[test]
@@ -891,7 +959,7 @@ mod integration_tests {
                 pre_launch: String::new(),
                 ..i.clone()
             }),
-            title: "Over to Modrinth".into(),
+            title: "Checking".into(),
             error: "Java is running".into(),
             ..Default::default()
         }));
@@ -908,7 +976,6 @@ mod integration_tests {
         publish_discovery(&config, found(), &view, true).unwrap();
         {
             let v = view.lock().unwrap();
-            assert_eq!(v.title, "Over to Modrinth");
             assert_eq!(v.error, "Java is running");
             assert_eq!(v.instances.len(), 2);
             assert_eq!(v.selected.as_ref().unwrap().pre_launch, "hook pasted since");
@@ -917,30 +984,8 @@ mod integration_tests {
         // An explicit look does refresh the status.
         publish_discovery(&config, found(), &view, false).unwrap();
         let v = view.lock().unwrap();
-        assert_eq!(v.title, "Ready when you are");
         assert!(v.error.is_empty());
-    }
-    #[test]
-    fn explicit_update_only_action_checks_even_when_automatic_updates_are_off() {
-        for (automatic, launch_after_update, expected) in [
-            (false, false, true),
-            (false, true, false),
-            (true, false, true),
-            (true, true, true),
-        ] {
-            let config = Settings {
-                automatic,
-                launch_after_update,
-                ..Default::default()
-            };
-            assert_eq!(
-                should_update(&config, Action::Play),
-                expected,
-                "automatic={automatic}, launch_after_update={launch_after_update}"
-            );
-            assert!(should_update(&config, Action::Check));
-            assert!(should_update(&config, Action::Repair));
-        }
+        assert_eq!(v.version, "0.13.0");
     }
     #[test]
     fn full_channel_archive_adoption_update_and_second_launch_preserve_personal_data() {
@@ -1038,7 +1083,7 @@ mod integration_tests {
         }
     }
     #[test]
-    fn scheduled_check_leaves_a_pack_the_server_accepts_untouched() {
+    fn scheduled_check_brings_a_compatible_pack_to_the_latest_release() {
         let t = Temp::new();
         let profile = t.0.join("profile");
         fs::write(profile.join("mods/mid.jar"), b"mid").unwrap();
@@ -1046,10 +1091,26 @@ mod integration_tests {
         let source = Source::new(fixture_channel(&t), t.0.join("cache"));
         let view = Arc::new(Mutex::new(View::default()));
         synchronize(&i, false, true, &view, &source, || false, || Ok(i.clone())).unwrap();
-        assert!(!profile.join("mods/new.jar").exists());
-        assert!(!profile.join(".smb-companion/state.json").exists());
-        assert!(!view.lock().unwrap().busy);
-        assert_eq!(view.lock().unwrap().latest, "0.13.0");
+        assert_eq!(fs::read(profile.join("mods/new.jar")).unwrap(), b"new");
+        assert!(!profile.join("mods/mid.jar").exists());
+        assert_eq!(view.lock().unwrap().version, "0.13.0");
+        // Already the latest: a scheduled check writes nothing at all.
+        let state = fs::read(profile.join(".smb-companion/state.json")).unwrap();
+        let latest = fixture_instance(&profile, "0.13.0");
+        synchronize(
+            &latest,
+            false,
+            true,
+            &view,
+            &source,
+            || false,
+            || Ok(latest.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(profile.join(".smb-companion/state.json")).unwrap(),
+            state
+        );
     }
     #[test]
     fn scheduled_check_updates_when_the_server_needs_a_newer_pack() {
@@ -1082,7 +1143,7 @@ mod integration_tests {
         };
         // Handed to Modrinth, nothing there yet: confirm there.
         publish_discovery(&config, found(vec![]), &view, true).unwrap();
-        assert_eq!(view.lock().unwrap().title, "Confirm in Modrinth");
+        assert_eq!(view.lock().unwrap().headline(), "Confirm in Modrinth");
         // Modrinth is still installing the pack it was given.
         let mut i = Instance {
             id: "local:new".into(),
@@ -1096,17 +1157,28 @@ mod integration_tests {
         publish_discovery(&config, found(vec![i.clone()]), &view, true).unwrap();
         {
             let v = view.lock().unwrap();
-            assert_eq!(v.title, "Modrinth is installing SMB");
+            assert_eq!(v.headline(), "Installing");
             assert!(!v.installing);
         }
         // Done: a quiet look notices and the card turns ready.
         i.ready = true;
         publish_discovery(&config, found(vec![i]), &view, true).unwrap();
-        assert_eq!(view.lock().unwrap().title, "Ready when you are");
+        assert_eq!(view.lock().unwrap().headline(), "Ready");
+        {
+            let mut v = view.lock().unwrap();
+            v.version = "0.13.0".into();
+            v.latest = "0.14.0".into();
+            assert_eq!(v.headline(), "Update ready");
+            v.latest = "0.13.0".into();
+            assert_eq!(v.headline(), "Up to date");
+            v.launched = Some(Instant::now());
+            assert_eq!(v.headline(), "Launching");
+        }
         // Nothing found and nothing handed over: offer the install.
         let view = Arc::new(Mutex::new(View::default()));
+        assert_eq!(view.lock().unwrap().headline(), "Connecting");
         publish_discovery(&Settings::default(), found(vec![]), &view, false).unwrap();
-        assert_eq!(view.lock().unwrap().title, "Get SMB in Modrinth");
+        assert_eq!(view.lock().unwrap().headline(), "Not installed");
     }
     #[test]
     #[ignore = "Read-only archive verification of the prepared local release feed"]
@@ -1147,5 +1219,36 @@ mod integration_tests {
             files.iter().map(|f| f.bytes.len()).sum::<usize>()
         );
         assert!(!files.is_empty());
+    }
+}
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+    /// SMB_PROFILE_COPY: a disposable copy of a real SMB profile's pack folders.
+    #[test]
+    #[ignore = "Updates a disposable copy of a real profile from the live feed"]
+    fn real_profile_copy_updates_from_the_live_feed() {
+        let copy = PathBuf::from(std::env::var("SMB_PROFILE_COPY").expect("SMB_PROFILE_COPY"))
+            .canonicalize()
+            .unwrap();
+        let found = modrinth::discover().unwrap();
+        let real = choose(&found.instances, "").unwrap().clone();
+        assert_ne!(real.directory, copy, "never the real profile");
+        let i = Instance {
+            directory: copy.clone(),
+            ..real
+        };
+        let source = Source::new(
+            CHANNEL.into(),
+            PathBuf::from(std::env::var("APPDATA").unwrap())
+                .join("SMB/LoL Companion/minecraft-cache"),
+        );
+        let view = Arc::new(Mutex::new(View::default()));
+        for run in 1..=2 {
+            synchronize(&i, false, false, &view, &source, || false, || Ok(i.clone())).unwrap();
+            let v = view.lock().unwrap();
+            println!("run {run}: {} (latest {})", v.version, v.latest);
+            assert_eq!(v.version, v.latest);
+        }
     }
 }

@@ -64,20 +64,10 @@ fn main() -> eframe::Result {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title(system::APP_NAME)
         .with_app_id("smb-lol-companion")
-        // Screenshot mode renders the whole page for documentation.
-        .with_inner_size([
-            440.,
-            if screenshot.is_some() {
-                if flag("--demo-minecraft") {
-                    1180.
-                } else {
-                    900.
-                }
-            } else {
-                760.
-            },
-        ])
-        .with_min_inner_size([400., 520.])
+        // Fixed width, no resizing: the app sizes the height to its content.
+        .with_inner_size([app::WIDTH, 560.])
+        .with_resizable(false)
+        .with_maximize_button(false)
         .with_active(!start_hidden && screenshot.is_none());
     if let Ok(icon) =
         eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon/app-256.png"))

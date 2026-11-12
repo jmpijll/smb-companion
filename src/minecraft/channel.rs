@@ -260,8 +260,13 @@ fn runtime_id(s: &str) -> bool {
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
 }
+/// Files the game or the player rewrites: the pack's version is a default.
+/// Untouched, it follows new releases; once changed, the player's copy stays.
 pub fn mutable_path(path: &str) -> bool {
-    path.starts_with("config/") || matches!(path, "options.txt" | "servers.dat")
+    path.starts_with("config/")
+        || matches!(path, "options.txt" | "servers.dat")
+        // Iris keeps each shader's settings next to it as `<shader>.txt`.
+        || (path.starts_with("shaderpacks/") && path.ends_with(".txt"))
 }
 fn check_case(paths: &mut BTreeMap<String, String>, path: &str) -> Result<(), String> {
     let lower = path.to_ascii_lowercase();

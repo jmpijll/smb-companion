@@ -179,7 +179,14 @@ pub fn validate_path(path: &str) -> Result<(), String> {
 }
 
 fn mutable_default(path: &str) -> bool {
-    path.starts_with("config/") || matches!(path, "options.txt" | "servers.dat")
+    super::channel::mutable_path(path)
+}
+
+/// `<path>.disabled` exists: the player switched this file off in Modrinth.
+fn disabled_copy(profile: &Path, path: &str) -> bool {
+    target(profile, &format!("{path}.disabled"))
+        .and_then(|copy| metadata(&copy))
+        .is_ok_and(|m| m.is_some_and(|m| m.is_file()))
 }
 
 fn is_link(meta: &Metadata) -> bool {
@@ -611,17 +618,29 @@ pub fn apply(
         let current = hash_file(&dest)?;
         let previous = baseline.get(path);
         let new = new_files.get(path);
-        let mutable = old_state
-            .as_ref()
-            .and_then(|s| s.files.get(path))
-            .map(|o| o.mutable)
-            .unwrap_or_else(|| mutable_default(path));
+        // Settings the game rewrites (configs, shader options) are the
+        // player's once touched, even if an older release owned them strictly.
+        let mutable = mutable_default(path)
+            || old_state
+                .as_ref()
+                .and_then(|s| s.files.get(path))
+                .is_some_and(|o| o.mutable);
+        // Modrinth's own "disable mod" renames the jar; that choice stands.
+        let disabled = !mutable && current.is_none() && disabled_copy(lock.profile(), path);
         match (previous, new) {
             (None, Some(new)) => {
+                if current.as_deref() == Some(hash_bytes(&new.bytes).as_str()) {
+                    // Already exactly the pack's file: adopt it as it is.
+                    continue;
+                }
                 if current.is_some() {
                     return Err(format!(
                         "Unowned file conflicts with the pack: {path}; move it aside first"
                     ));
+                }
+                if disabled {
+                    report.preserved += 1;
+                    continue;
                 }
                 entries.push(Change {
                     path: path.clone(),
@@ -635,16 +654,18 @@ pub fn apply(
                     report.preserved += 1;
                     continue;
                 }
-                if !mutable && current.is_some() && current.as_ref() != Some(old) {
+                // Repair puts the pack's own file back; otherwise a changed
+                // mod stays untouched and the update waits.
+                if !mutable && !repair && current.is_some() && current.as_ref() != Some(old) {
                     return Err(format!(
-                        "Pack-owned file was modified: {path}; move it aside before repair"
+                        "Pack-owned file was modified: {path}; Repair pack replaces it"
                     ));
                 }
-                if !mutable && current.is_none() && !repair {
-                    return Err(format!(
-                        "Pack-owned file is missing: {path}; use Repair pack"
-                    ));
+                if disabled {
+                    report.preserved += 1;
+                    continue;
                 }
+                // A missing pack file is simply put back.
                 let next = hash_bytes(&new.bytes);
                 if current.as_ref() != Some(&next) {
                     entries.push(Change {
@@ -659,11 +680,6 @@ pub fn apply(
                 if mutable {
                     report.preserved += 1;
                     continue;
-                }
-                if current.is_none() && !repair {
-                    return Err(format!(
-                        "Pack-owned file is missing: {path}; use Repair pack"
-                    ));
                 }
                 if current.is_some() && current.as_ref() != Some(old) {
                     return Err(format!(

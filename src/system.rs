@@ -243,14 +243,19 @@ pub fn lower_priority() {
 
 /// Process ID of the first running process with this executable name.
 fn find_process(exe: &str) -> Option<u32> {
+    find_processes(exe).into_iter().next()
+}
+
+/// Every running process with one of these executable names.
+fn find_processes(exe: &str) -> Vec<u32> {
+    let mut found = Vec::new();
     unsafe {
         let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snap == INVALID_HANDLE_VALUE {
-            return None;
+            return found;
         }
         let mut entry: PROCESSENTRY32W = std::mem::zeroed();
         entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-        let mut found = None;
         let mut ok = Process32FirstW(snap, &mut entry) != 0;
         while ok {
             let len = entry
@@ -259,14 +264,37 @@ fn find_process(exe: &str) -> Option<u32> {
                 .position(|c| *c == 0)
                 .unwrap_or(entry.szExeFile.len());
             if String::from_utf16_lossy(&entry.szExeFile[..len]).eq_ignore_ascii_case(exe) {
-                found = Some(entry.th32ProcessID);
-                break;
+                found.push(entry.th32ProcessID);
             }
             ok = Process32NextW(snap, &mut entry) != 0;
         }
         CloseHandle(snap);
-        found
     }
+    found
+}
+
+/// Full executable path of a running process, if Windows lets us read it.
+pub fn process_path(pid: u32) -> Option<PathBuf> {
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let mut buf = vec![0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut len) != 0;
+        CloseHandle(process);
+        ok.then(|| PathBuf::from(String::from_utf16_lossy(&buf[..len as usize])))
+    }
+}
+
+/// Running Java processes with their executable paths (None when unreadable).
+pub fn java_processes() -> Vec<(u32, Option<PathBuf>)> {
+    ["java.exe", "javaw.exe"]
+        .iter()
+        .flat_map(|exe| find_processes(exe))
+        .map(|pid| (pid, process_path(pid)))
+        .collect()
 }
 
 /// True when the League game process (not just the client) is running.
@@ -274,16 +302,15 @@ pub fn game_running() -> bool {
     find_process("League of Legends.exe").is_some()
 }
 
-/// Conservatively defer pack writes while any Minecraft/Java process exists.
 /// Whether a process with this executable name is running.
 pub fn process_running(exe: &str) -> bool {
     find_process(exe).is_some()
 }
 
+/// Minecraft from Modrinth is running: pack files must not change now.
+/// Other Java apps (IDEs, build tools) no longer hold updates back.
 pub fn minecraft_running() -> bool {
-    ["java.exe", "javaw.exe", "Minecraft.Windows.exe"]
-        .iter()
-        .any(|exe| find_process(exe).is_some())
+    crate::minecraft::modrinth::game_running()
 }
 
 /// Folder of the running League client, wherever it is installed. Its
@@ -292,17 +319,7 @@ pub fn league_client_dir() -> Option<PathBuf> {
     ["LeagueClientUx.exe", "LeagueClient.exe"]
         .iter()
         .find_map(|exe| find_process(exe))
-        .and_then(|pid| unsafe {
-            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-            if process.is_null() {
-                return None;
-            }
-            let mut buf = vec![0u16; 1024];
-            let mut len = buf.len() as u32;
-            let ok = QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut len) != 0;
-            CloseHandle(process);
-            ok.then(|| PathBuf::from(String::from_utf16_lossy(&buf[..len as usize])))
-        })
+        .and_then(process_path)
         .and_then(|exe| exe.parent().map(PathBuf::from))
 }
 

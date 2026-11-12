@@ -1,6 +1,6 @@
 [package]
 name = "smb-lol"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "SMB companion: League setup and verified Minecraft pack updates before play, without getting in the way of your game."
 license = "MIT"

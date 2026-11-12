@@ -1,4 +1,5 @@
-//! Narrow read-only adapter for the verified Modrinth 0.23.1 schema.
+//! Narrow read-only adapter for Modrinth App's profile database (0.23 schema).
+//! No version pin: Modrinth updates itself, so the schema query is the check.
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -160,13 +161,77 @@ pub fn missing() -> bool {
     executable_path().map(|p| !p.is_file()).unwrap_or(true)
 }
 
-/// The verified Modrinth App 0.23.1 executable.
+/// Modrinth App's executable. Its version is not pinned: Modrinth updates
+/// itself, and the profile query in `read_instances` fails closed on a schema
+/// it does not recognise.
 pub fn executable() -> Result<PathBuf, String> {
     let executable = executable_path()?;
-    if executable_version(&executable)? != [0, 23, 1, 0] {
-        return Err("This build supports Modrinth App 0.23.1. A different version needs adapter verification before updates can run.".into());
+    if !executable.is_file() {
+        return Err("Modrinth App is not installed".into());
     }
     Ok(executable)
+}
+
+fn base() -> Result<PathBuf, String> {
+    Ok(
+        PathBuf::from(std::env::var_os("APPDATA").ok_or("Windows app folders unavailable")?)
+            .join("ModrinthApp"),
+    )
+}
+
+/// Minecraft started by Modrinth is running. Modrinth records the games it
+/// starts; its own Java runtimes are checked too, in case a record is missing.
+/// When Modrinth's database cannot be read, any Java process counts.
+pub fn game_running() -> bool {
+    let javas = crate::system::java_processes();
+    let Ok(base) = base() else {
+        return !javas.is_empty();
+    };
+    match running_in(&base.join("app.db"), &base, &javas) {
+        Ok(running) => running,
+        Err(_) => !javas.is_empty(),
+    }
+}
+
+fn running_in(db: &Path, base: &Path, javas: &[(u32, Option<PathBuf>)]) -> Result<bool, String> {
+    use rusqlite::{Connection, OpenFlags};
+    if !db.is_file() {
+        return Err("no Modrinth database".into());
+    }
+    let c = Connection::open_with_flags(
+        db,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| e.to_string())?;
+    c.busy_timeout(std::time::Duration::from_secs(2))
+        .map_err(|e| e.to_string())?;
+    let recorded: Vec<u32> = c
+        .prepare("SELECT pid FROM processes")
+        .and_then(|mut q| {
+            q.query_map([], |r| r.get::<_, i64>(0))?
+                .map(|r| r.map(|p| p as u32))
+                .collect()
+        })
+        .map_err(|e| e.to_string())?;
+    let runtimes: Vec<PathBuf> = c
+        .prepare("SELECT path FROM java_versions")
+        .and_then(|mut q| {
+            q.query_map([], |r| r.get::<_, String>(0))?
+                .map(|r| r.map(PathBuf::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let lower = |p: &Path| p.to_string_lossy().to_lowercase().replace('/', "\\");
+    let base = lower(base);
+    let runtimes: Vec<String> = runtimes.iter().map(|p| lower(p)).collect();
+    Ok(javas.iter().any(|(pid, path)| match path {
+        // A Java process Windows won't describe: assume it might be the game.
+        None => true,
+        Some(path) => {
+            let path = lower(path);
+            recorded.contains(pid) || path.starts_with(&base) || runtimes.contains(&path)
+        }
+    }))
 }
 
 /// Hands a verified .mrpack to Modrinth, exactly like opening the file:
@@ -184,49 +249,12 @@ pub fn install(executable: &Path, mrpack: &Path) -> Result<(), String> {
 
 pub fn discover() -> Result<Discovery, String> {
     let executable = executable()?;
-    let base = PathBuf::from(std::env::var_os("APPDATA").ok_or("Windows app folders unavailable")?)
-        .join("ModrinthApp");
+    let base = base()?;
     let instances = read_instances(&base.join("app.db"), &base)?;
     Ok(Discovery {
         executable,
         instances,
     })
-}
-
-fn executable_version(path: &Path) -> Result<[u16; 4], String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
-    };
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-    unsafe {
-        let size = GetFileVersionInfoSizeW(wide.as_ptr(), std::ptr::null_mut());
-        if size == 0 || size > 1 << 20 {
-            return Err("Modrinth App 0.23.1 was not found in its standard install folder".into());
-        }
-        let mut data = vec![0u8; size as usize];
-        if GetFileVersionInfoW(wide.as_ptr(), 0, size, data.as_mut_ptr().cast()) == 0 {
-            return Err("Could not verify Modrinth App version".into());
-        }
-        let mut p = std::ptr::null_mut();
-        let mut n = 0;
-        if VerQueryValueW(data.as_ptr().cast(), [92u16, 0].as_ptr(), &mut p, &mut n) == 0
-            || p.is_null()
-            || n < (std::mem::size_of::<VS_FIXEDFILEINFO>() as u32)
-        {
-            return Err("Modrinth App version is unreadable".into());
-        }
-        let v = std::ptr::read_unaligned(p.cast::<VS_FIXEDFILEINFO>());
-        if v.dwSignature != 0xFEEF04BD {
-            return Err("Modrinth App version is invalid".into());
-        }
-        Ok([
-            (v.dwFileVersionMS >> 16) as u16,
-            v.dwFileVersionMS as u16,
-            (v.dwFileVersionLS >> 16) as u16,
-            v.dwFileVersionLS as u16,
-        ])
-    }
 }
 
 pub fn handoff(executable: &Path, id: &str) -> Result<(), String> {
@@ -250,8 +278,9 @@ mod tests {
     fn native_discovery_readonly() {
         let found = discover().unwrap();
         println!(
-            "Verified Modrinth 0.23.1: {} SMB profiles",
-            found.instances.len()
+            "Modrinth: {} SMB profiles, game running: {}",
+            found.instances.len(),
+            game_running()
         );
         assert!(!found.instances.is_empty());
         for i in found.instances {
@@ -303,6 +332,33 @@ mod tests {
         );
         assert!(i[0].ready);
         assert_eq!(before, fs::read(db).unwrap());
+    }
+    #[test]
+    fn only_minecraft_from_modrinth_holds_pack_updates_back() {
+        let t = Temp::new();
+        let db = t.0.join("app.db");
+        let c = Connection::open(&db).unwrap();
+        c.execute_batch(r"CREATE TABLE processes(pid INTEGER);CREATE TABLE java_versions(path TEXT);INSERT INTO java_versions VALUES('C:\Java\zulu21\bin\javaw.exe');").unwrap();
+        let java = |pid: u32, path: &str| (pid, Some(PathBuf::from(path)));
+        let base = Path::new("C:/Users/P/AppData/Roaming/ModrinthApp");
+        // No Java, or only an IDE's Java: free to update.
+        assert!(!running_in(&db, base, &[]).unwrap());
+        let ide = [java(10, "C:/Program Files/JetBrains/jbr/bin/java.exe")];
+        assert!(!running_in(&db, base, &ide).unwrap());
+        // Modrinth's own runtime, a configured runtime, or a recorded game: wait.
+        let bundled = [java(
+            11,
+            "C:/Users/P/AppData/Roaming/ModrinthApp/meta/java_versions/zulu/bin/javaw.exe",
+        )];
+        assert!(running_in(&db, base, &bundled).unwrap());
+        assert!(running_in(&db, base, &[java(12, "c:/java/ZULU21/bin/javaw.exe")]).unwrap());
+        c.execute("INSERT INTO processes VALUES(10)", []).unwrap();
+        assert!(running_in(&db, base, &ide).unwrap());
+        // A Java process Windows won't describe might be the game.
+        assert!(!running_in(&db, base, &[]).unwrap());
+        assert!(running_in(&db, base, &[(13, None)]).unwrap());
+        // No readable database: not trusted.
+        assert!(running_in(&t.0.join("missing.db"), base, &ide).is_err());
     }
     #[test]
     fn an_instance_modrinth_is_still_installing_is_found_but_not_ready() {

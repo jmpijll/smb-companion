@@ -18,14 +18,12 @@ use std::{
     time::Duration,
 };
 use tray_icon::{
-    menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
 
 struct Tray {
     icon: TrayIcon,
-    auto: CheckMenuItem,
-    settings: SharedSettings,
     status: SharedStatus,
     tip: String,
 }
@@ -35,6 +33,10 @@ thread_local! {
     // can update/remove them even while egui is not painting a hidden window.
     static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
 }
+
+/// Fixed window width; the height follows the content.
+pub const WIDTH: f32 = 420.;
+const MARGIN: f32 = 16.;
 
 pub struct Companion {
     live: bool,
@@ -96,7 +98,8 @@ impl Companion {
         let mut app = Self {
             live,
             minecraft_selected,
-            minecraft: MinecraftPage::new(live, demo || !live),
+            // `--screenshot <png> --live` also reads Modrinth (read-only at first).
+            minecraft: MinecraftPage::new(connect && !demo, demo || !connect),
             settings,
             status,
             icons,
@@ -111,7 +114,7 @@ impl Companion {
             save_error: String::new(),
         };
         if live {
-            app.has_tray = create_tray(&cc.egui_ctx, app.settings.clone(), app.status.clone());
+            app.has_tray = create_tray(&cc.egui_ctx, app.status.clone());
         }
         app
     }
@@ -120,7 +123,6 @@ impl Companion {
         s.revision += 1;
         if self.live {
             self.save_error = s.save().err().unwrap_or_default();
-            sync_tray(s.enabled);
         }
         *self.settings.lock().unwrap() = s;
     }
@@ -150,45 +152,23 @@ impl Companion {
         id
     }
 
-    fn header(&mut self, ui: &mut Ui, config: &mut Settings, busy: bool) {
+    fn header(&mut self, ui: &mut Ui, busy: bool) {
         ui.horizontal(|ui| {
             let t = ui.input(|i| i.time) as f32;
             let turn = if busy { quarter_turns(t) } else { 0. };
-            shuriken(ui, 38., PINK, turn);
+            shuriken(ui, 34., PINK, turn);
             ui.add_space(6.);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 0.;
-                let mut job = egui::text::LayoutJob::default();
-                let fmt = |c| egui::TextFormat {
-                    font_id: FontId::new(25., display()),
-                    color: c,
-                    ..Default::default()
-                };
-                job.append("SMB ", 0., fmt(WHITE));
-                job.append("//", 0., fmt(PINK));
-                job.append(" COMPANION", 0., fmt(WHITE));
-                ui.label(job);
-                theme::label(
-                    ui,
-                    if self.minecraft_selected {
-                        "Minecraft · SMB pack"
-                    } else {
-                        "League · runes & spells"
-                    },
-                    STEEL,
-                );
-            });
-            if !self.minecraft_selected {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let label = if config.enabled { "Pause" } else { "Resume" };
-                    if theme::button(ui, label, !config.enabled)
-                        .on_hover_text("Pause or resume automatic setup")
-                        .clicked()
-                    {
-                        config.enabled = !config.enabled;
-                    }
-                });
-            }
+            let mut job = egui::text::LayoutJob::default();
+            let fmt = |c| egui::TextFormat {
+                font_id: FontId::new(25., display()),
+                color: c,
+                valign: egui::Align::Center,
+                ..Default::default()
+            };
+            job.append("SMB ", 0., fmt(WHITE));
+            job.append("//", 0., fmt(PINK));
+            job.append(" COMPANION", 0., fmt(WHITE));
+            ui.label(job);
         });
         ui.add_space(10.);
         ui.horizontal(|ui| {
@@ -202,38 +182,19 @@ impl Companion {
     }
 
     fn hero(&mut self, ui: &mut Ui, status: &Status, config: &Settings) {
-        let applied = status.setup.as_ref().is_some_and(|s| {
-            (s.runes_applied || !config.runes) && (s.spells_applied || !config.spells)
-        }) && config.enabled;
-        cut_panel(ui, applied, |ui| {
-            let (dot, label) = match (config.enabled, status.phase) {
-                (false, _) | (_, Phase::Paused) => (STEEL, "Paused"),
-                (_, Phase::Offline) => (STEEL_DIM, "League offline"),
-                (_, Phase::Idle) => (PINK, "League connected"),
-                (_, Phase::ChampSelect) => (PINK, "Champion select"),
-                (_, Phase::InGame) => (PINK, "In game"),
-            };
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(Vec2::splat(10.), Sense::hover());
-                if dot == PINK {
-                    ui.painter()
-                        .circle_filled(r.center(), 5., PINK.gamma_multiply(0.25));
-                }
-                ui.painter().circle_filled(r.center(), 3., dot);
-                theme::label(ui, label, if dot == PINK { PINK } else { STEEL });
-            });
-            ui.add_space(4.);
-            let (title, detail) = if config.enabled {
-                (status.title.as_str(), status.detail.as_str())
-            } else {
-                ("Paused", "Your League setup stays exactly as it is.")
-            };
-            text(ui, title.to_uppercase(), 30., display(), WHITE);
-            body(ui, detail, STEEL);
-            if let (Some(setup), true) = (&status.setup, config.enabled) {
-                ui.add_space(12.);
+        let (title, on) = match status.phase {
+            Phase::Paused => ("Off", false),
+            Phase::Offline => ("Disconnected", false),
+            Phase::Idle => ("Connected", true),
+            Phase::ChampSelect => ("Champ select", true),
+            Phase::InGame => ("In game", true),
+        };
+        cut_panel(ui, on, |ui| {
+            headline(ui, title, on, |_| ());
+            if let (Some(setup), Phase::ChampSelect) = (&status.setup, status.phase) {
+                ui.add_space(10.);
                 hairline(ui);
-                ui.add_space(12.);
+                ui.add_space(10.);
                 self.setup_card(ui, setup, config, &status.keys);
             }
         });
@@ -392,197 +353,161 @@ impl Companion {
         }
     }
 
-    fn automation(&mut self, ui: &mut Ui, config: &mut Settings, status: &Status) {
-        section(ui, "Automatic setup");
+    fn switches(&mut self, ui: &mut Ui, config: &mut Settings, status: &Status) {
         let cap = |label: &str| (label.chars().count() as f32 * 9. + 18.).max(36.);
         let caps_width = cap(&status.keys[0]) + cap(&status.keys[1]) + 10.;
         let flash = status
             .flash_icon
             .as_ref()
             .and_then(|a| self.texture(ui.ctx(), &a.icon));
-        panel().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.add_enabled_ui(config.enabled, |ui| {
-                row(
-                    ui,
-                    |ui, r| paint_rune(ui.painter(), r, PINK),
-                    "Runes",
-                    "Best page for your pick and role.",
-                    48.,
-                    |ui| {
-                        toggle(ui, &mut config.runes, "Runes");
-                    },
-                );
-                note(ui, &status.rune, config.runes);
-                ui.add_space(8.);
-                hairline(ui);
-                ui.add_space(8.);
-                row(
-                    ui,
-                    |ui, r| paint_spell(ui.painter(), r, PINK),
-                    "Summoner spells",
-                    "Recommended pair, Flash where you want it.",
-                    48.,
-                    |ui| {
-                        toggle(ui, &mut config.spells, "Summoner spells");
-                    },
-                );
-                note(ui, &status.spell, config.spells);
-                ui.add_space(8.);
-                hairline(ui);
-                ui.add_space(8.);
-                ui.add_enabled_ui(config.spells, |ui| {
-                    row(
-                        ui,
-                        |ui, r| match flash {
-                            Some(tex) => {
-                                ui.painter().image(tex, r, full_uv(), Color32::WHITE);
-                            }
-                            None => paint_spell(ui.painter(), r, PINK),
-                        },
-                        "Flash key",
-                        "Learns from your own games.",
-                        caps_width,
-                        |ui| {
-                            for (key, label) in [("f", &status.keys[1]), ("d", &status.keys[0])] {
-                                let chosen = config.flash == key;
-                                if keycap(ui, label, chosen, Vec2::new(cap(label), 32.))
-                                    .on_hover_text(format!("Flash on {label}"))
-                                    .clicked()
-                                {
-                                    config.flash = key.into();
-                                }
-                            }
-                        },
-                    );
-                });
-                ui.add_space(8.);
-                hairline(ui);
-                ui.add_space(8.);
-                row(
-                    ui,
-                    |ui, r| paint_item(ui.painter(), r, PINK),
-                    "Item set & skill order",
-                    "OP.GG's build, waiting in your shop.",
-                    48.,
-                    |ui| {
-                        toggle(ui, &mut config.items, "Item set & skill order");
-                    },
-                );
-            });
-        });
-    }
-
-    fn behaviour(&mut self, ui: &mut Ui, status: &Status) {
-        section(ui, "Out of your way");
-        panel().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            let mut on = self.autostart;
-            let has_tray = self.has_tray && self.live;
+        row(
+            ui,
+            |ui, r| paint_rune(ui.painter(), r, PINK),
+            "Runes",
+            "",
+            48.,
+            |ui| {
+                toggle(ui, &mut config.runes, "Runes");
+            },
+        );
+        spaced_hairline(ui);
+        row(
+            ui,
+            |ui, r| paint_spell(ui.painter(), r, PINK),
+            "Summoner spells",
+            "",
+            48.,
+            |ui| {
+                toggle(ui, &mut config.spells, "Summoner spells");
+            },
+        );
+        spaced_hairline(ui);
+        ui.add_enabled_ui(config.spells, |ui| {
             row(
                 ui,
-                |ui, r| paint_shuriken(ui.painter(), r.shrink(3.), PINK, VOID, 0.),
-                "Start with Windows",
-                "Straight to the tray. Never over your game.",
-                48.,
+                |ui, r| match flash {
+                    Some(tex) => {
+                        ui.painter().image(tex, r, full_uv(), Color32::WHITE);
+                    }
+                    None => paint_spell(ui.painter(), r, PINK),
+                },
+                "Flash key",
+                "",
+                caps_width,
                 |ui| {
-                    ui.add_enabled_ui(has_tray, |ui| toggle(ui, &mut on, "Start with Windows"));
+                    for (key, label) in [("f", &status.keys[1]), ("d", &status.keys[0])] {
+                        let chosen = config.flash == key;
+                        if keycap(ui, label, chosen, Vec2::new(cap(label), 30.))
+                            .on_hover_text(format!("Flash on {label}"))
+                            .clicked()
+                        {
+                            config.flash = key.into();
+                        }
+                    }
                 },
             );
-            if self.live && on != self.autostart {
-                match system::set_autostart(on) {
-                    Ok(()) => self.autostart = on,
-                    Err(e) => self.save_error = e,
-                }
-            }
-            ui.add_space(8.);
-            text(
-                ui,
-                "No overlays, no notifications, no focus grabs. Low CPU priority.",
-                11.5,
-                FontFamily::Proportional,
-                STEEL,
-            );
-            ui.add_space(4.);
-            if system::installed() {
-                text(
-                    ui,
-                    "Companion updates install while your games are closed.",
-                    11.5,
-                    FontFamily::Proportional,
-                    STEEL,
-                );
-            } else if !status.update.is_empty() {
-                ui.add_enabled_ui(self.live, |ui| {
-                    ui.hyperlink_to(
-                        RichText::new(format!(
-                            "Version {} is out. Get it on GitHub",
-                            status.update
-                        ))
-                        .font(FontId::new(11.5, FontFamily::Proportional))
-                        .color(PINK),
-                        format!("https://github.com/{}/releases/latest", client::REPOSITORY),
-                    );
-                });
-            }
         });
+        spaced_hairline(ui);
+        row(
+            ui,
+            |ui, r| paint_item(ui.painter(), r, PINK),
+            "Item set & skill order",
+            "",
+            48.,
+            |ui| {
+                toggle(ui, &mut config.items, "Item set & skill order");
+            },
+        );
     }
 
-    fn troubleshooting(&mut self, ui: &mut Ui, ctx: &egui::Context, config: &mut Settings) {
-        ui.add_space(12.);
-        egui::CollapsingHeader::new(
-            RichText::new("CONNECTION & TROUBLESHOOTING")
-                .font(FontId::new(10.5, semibold()))
-                .color(STEEL),
-        )
-        .icon(collapse_icon)
-        .show(ui, |ui| {
-            body(
-                ui,
-                "League is found by itself, wherever it's installed. Problems retry on \
-                 their own; the activity log says what happened.",
-                STEEL,
-            );
-            ui.add_space(8.);
-            ui.horizontal(|ui| {
-                if theme::button(ui, "Retry", false).clicked() {
-                    config.revision += 1;
-                    self.status.lock().unwrap().error.clear();
-                }
-                if ui
-                    .add_enabled_ui(self.live, |ui| theme::button(ui, "Activity log", false))
-                    .inner
-                    .clicked()
-                {
-                    let dir = system::data_dir();
-                    let log = dir.join("activity.log");
-                    let _ = std::process::Command::new("explorer")
-                        .arg(if log.is_file() {
-                            format!("/select,{}", log.display())
-                        } else {
-                            dir.display().to_string()
-                        })
-                        .spawn();
-                }
-                if theme::button(ui, "Quit", false).clicked() {
-                    self.quit = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            });
-            ui.add_space(8.);
-            body(
-                ui,
-                "Recommendations come from OP.GG; without internet, League's own \
-                      recommendations fill in. Your own rune pages and item sets are never \
-                      edited or deleted; the companion keeps one of each. Close this window \
-                      to keep running in the tray.",
-                STEEL,
-            );
-            if system::portable_dir().is_some() {
-                ui.add_space(6.);
-                theme::label(ui, "Portable mode · settings stay in the app folder", STEEL);
+    /// Shared by both pages, at the end of the switches.
+    fn startup(&mut self, ui: &mut Ui) {
+        let mut on = self.autostart;
+        let has_tray = self.has_tray && self.live;
+        row(
+            ui,
+            |ui, r| paint_shuriken(ui.painter(), r.shrink(3.), PINK, VOID, 0.),
+            "Start with Windows",
+            "",
+            48.,
+            |ui| {
+                ui.add_enabled_ui(has_tray, |ui| toggle(ui, &mut on, "Start with Windows"));
+            },
+        );
+        if self.live && on != self.autostart {
+            match system::set_autostart(on) {
+                Ok(()) => self.autostart = on,
+                Err(e) => self.save_error = e,
             }
-        });
+        }
+    }
+
+    /// Retry, the activity log, quitting, and any problem.
+    fn advanced(
+        &mut self,
+        ui: &mut Ui,
+        ctx: &egui::Context,
+        config: &mut Settings,
+        status: &Status,
+    ) {
+        let problem = if self.minecraft_selected {
+            self.minecraft.problem()
+        } else {
+            !status.error.is_empty()
+        } || !self.save_error.is_empty();
+        theme::advanced(
+            ui,
+            if self.minecraft_selected {
+                "advanced-minecraft"
+            } else {
+                "advanced-league"
+            },
+            problem,
+            |ui| {
+                if self.minecraft_selected {
+                    self.minecraft.details(ui);
+                }
+                ui.horizontal_wrapped(|ui| {
+                    if self.minecraft_selected {
+                        self.minecraft.buttons(ui);
+                    } else if theme::button(ui, "Retry", false).clicked() {
+                        config.revision += 1;
+                        self.status.lock().unwrap().error.clear();
+                    }
+                    if theme::button_if(ui, "Activity log", false, self.live).clicked() {
+                        let dir = system::data_dir();
+                        let log = dir.join("activity.log");
+                        let _ = std::process::Command::new("explorer")
+                            .arg(if log.is_file() {
+                                format!("/select,{}", log.display())
+                            } else {
+                                dir.display().to_string()
+                            })
+                            .spawn();
+                    }
+                    if theme::button(ui, "Quit", false).clicked() {
+                        self.quit = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+                if !system::installed() && !status.update.is_empty() {
+                    ui.add_enabled_ui(self.live, |ui| {
+                        ui.hyperlink_to(
+                            RichText::new(format!("Version {} is out", status.update))
+                                .font(FontId::new(11.5, FontFamily::Proportional))
+                                .color(PINK),
+                            format!("https://github.com/{}/releases/latest", client::REPOSITORY),
+                        );
+                    });
+                }
+                if self.minecraft_selected {
+                    self.minecraft.problems(ui);
+                } else {
+                    theme::problem(ui, &status.error);
+                }
+                theme::problem(ui, &self.save_error);
+            },
+        );
     }
 }
 
@@ -629,70 +554,49 @@ impl eframe::App for Companion {
         let busy = if self.minecraft_selected {
             self.minecraft.busy()
         } else {
-            status.busy && config.enabled
+            status.busy
         };
-        egui::CentralPanel::default()
+        let content = egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
                     .fill(VOID)
-                    .inner_margin(egui::Margin::symmetric(20, 18)),
+                    .inner_margin(egui::Margin::symmetric(20, MARGIN as i8)),
             )
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.header(ui, &mut config, busy);
-                    ui.add_space(16.);
+                ui.vertical(|ui| {
+                    self.header(ui, busy);
+                    ui.add_space(14.);
                     if self.minecraft_selected {
-                        self.minecraft.show(ui);
+                        self.minecraft.hero(ui);
                     } else {
                         self.hero(ui, &status, &config);
-                        self.automation(ui, &mut config, &status);
                     }
-                    self.behaviour(ui, &status);
-                    if self.minecraft_selected {
-                        self.minecraft.troubleshooting(ui);
-                    } else {
-                        self.troubleshooting(ui, ctx, &mut config);
-                    }
-                    for error in [
+                    ui.add_space(12.);
+                    panel().show(ui, |ui| {
+                        ui.set_width(ui.available_width());
                         if self.minecraft_selected {
-                            ""
+                            self.minecraft.switches(ui);
                         } else {
-                            &status.error
-                        },
-                        &self.save_error,
-                    ] {
-                        if !error.is_empty() {
-                            ui.add_space(10.);
-                            alert(ui, error);
+                            self.switches(ui, &mut config, &status);
                         }
-                    }
-                    ui.add_space(16.);
-                    hairline(ui);
-                    ui.add_space(8.);
-                    ui.horizontal(|ui| {
-                        // Brand guide §1.1: explain the name once per environment.
-                        ui.label(theme::label_job(
-                            "SMB — Sexy Maar Bescheiden",
-                            false,
-                            STEEL_DIM,
-                        ));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let line = if !self.live {
-                                "Preview · not saved".to_owned()
-                            } else if self.minecraft_selected {
-                                self.minecraft.status_line()
-                            } else if !config.enabled {
-                                "Automation paused".to_owned()
-                            } else if status.last_applied.is_empty() {
-                                status.activity.clone()
-                            } else {
-                                format!("Last setup {}", status.last_applied)
-                            };
-                            text(ui, line, 11., FontFamily::Proportional, STEEL);
-                        });
+                        spaced_hairline(ui);
+                        self.startup(ui);
                     });
-                });
-            });
+                    self.advanced(ui, ctx, &mut config, &status);
+                })
+                .response
+                .rect
+                .bottom()
+            })
+            .inner;
+        // The window is exactly as tall as what it shows: no resizing, no
+        // scrolling, no empty space.
+        let height = (content + MARGIN).ceil();
+        let inner = ctx.input(|i| i.viewport().inner_rect.map(|r| r.height()));
+        if inner.is_some_and(|h| (h - height).abs() >= 1.) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(WIDTH, height)));
+            ctx.request_repaint();
+        }
         if config != old {
             self.save(config);
         }
@@ -748,13 +652,10 @@ impl Drop for Companion {
     }
 }
 
-fn note(ui: &mut Ui, value: &str, on: bool) {
-    if on && value == "Could not apply" {
-        ui.horizontal(|ui| {
-            ui.add_space(38.);
-            theme::label(ui, value, PINK);
-        });
-    }
+fn spaced_hairline(ui: &mut Ui) {
+    ui.add_space(8.);
+    hairline(ui);
+    ui.add_space(8.);
 }
 
 fn full_uv() -> Rect {
@@ -781,14 +682,12 @@ fn quarter_turns(t: f32) -> f32 {
     (n + ease) * std::f32::consts::FRAC_PI_2
 }
 
-fn create_tray(ctx: &egui::Context, settings: SharedSettings, status: SharedStatus) -> bool {
+fn create_tray(ctx: &egui::Context, status: SharedStatus) -> bool {
     let menu = Menu::new();
     let open = MenuItem::new("Open SMB Companion", true, None);
-    let enabled = settings.lock().unwrap().enabled;
-    let auto = CheckMenuItem::new("Automatic runes & spells", true, enabled, None);
     let quit = MenuItem::new("Quit", true, None);
     if menu
-        .append_items(&[&open, &auto, &PredefinedMenuItem::separator(), &quit])
+        .append_items(&[&open, &PredefinedMenuItem::separator(), &quit])
         .is_err()
     {
         return false;
@@ -803,7 +702,7 @@ fn create_tray(ctx: &egui::Context, settings: SharedSettings, status: SharedStat
         return false;
     };
     let Ok(tray) = TrayIconBuilder::new()
-        .with_tooltip("SMB Companion · runes & spells")
+        .with_tooltip("SMB Companion")
         .with_icon(icon)
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
@@ -811,12 +710,10 @@ fn create_tray(ctx: &egui::Context, settings: SharedSettings, status: SharedStat
     else {
         return false;
     };
-    let (open_id, auto_id, quit_id) = (open.id().clone(), auto.id().clone(), quit.id().clone());
+    let (open_id, quit_id) = (open.id().clone(), quit.id().clone());
     TRAY.with(|t| {
         *t.borrow_mut() = Some(Tray {
             icon: tray,
-            auto,
-            settings: settings.clone(),
             status: status.clone(),
             tip: String::new(),
         })
@@ -851,14 +748,6 @@ fn create_tray(ctx: &egui::Context, settings: SharedSettings, status: SharedStat
         if event.id == open_id {
             system::show_window();
             c.request_repaint();
-        } else if event.id == auto_id {
-            let on = TRAY.with(|t| t.borrow().as_ref().map(|t| t.auto.is_checked()));
-            let mut s = settings.lock().unwrap().clone();
-            s.enabled = on.unwrap_or(!s.enabled);
-            s.revision += 1;
-            let _ = s.save();
-            *settings.lock().unwrap() = s;
-            c.request_repaint();
         } else if event.id == quit_id {
             status.lock().unwrap().stop = true;
             remove_tray();
@@ -868,23 +757,14 @@ fn create_tray(ctx: &egui::Context, settings: SharedSettings, status: SharedStat
     true
 }
 
-fn sync_tray(enabled: bool) {
-    TRAY.with(|t| {
-        if let Some(t) = t.borrow().as_ref() {
-            t.auto.set_checked(enabled);
-        }
-    });
-}
-
 unsafe extern "system" fn tray_tick(_: *mut std::ffi::c_void, _: u32, _: usize, _: u32) {
     TRAY.with(|t| {
         let Ok(mut t) = t.try_borrow_mut() else {
             return;
         };
         let Some(t) = t.as_mut() else { return };
-        let enabled = t.settings.lock().map(|s| s.enabled).unwrap_or(true);
         let tip = match t.status.lock() {
-            Ok(s) => tooltip(&s, enabled),
+            Ok(s) => tooltip(&s),
             Err(_) => return,
         };
         if tip != t.tip {
@@ -895,34 +775,25 @@ unsafe extern "system" fn tray_tick(_: *mut std::ffi::c_void, _: u32, _: usize, 
 }
 
 /// Tray tooltip: the state in one line (Windows allows 127 characters).
-fn tooltip(status: &Status, enabled: bool) -> String {
+fn tooltip(status: &Status) -> String {
     let pick = |s: &Setup| match s.mode.as_str() {
         "" => client::champion_label(&s.champion, &s.lane),
         m => format!("{} · {m}", s.champion),
     };
-    let state = if !enabled || status.phase == Phase::Paused {
-        "paused".to_owned()
-    } else if !status.error.is_empty() {
-        "needs a hand, see the window".to_owned()
-    } else {
-        match status.phase {
-            Phase::Offline => "waiting for League".to_owned(),
-            Phase::InGame => "in game".to_owned(),
-            Phase::ChampSelect => match &status.setup {
-                Some(s) if s.runes_applied || s.spells_applied => {
-                    format!("setup applied · {}", pick(s))
-                }
-                _ => "champion select".to_owned(),
-            },
-            _ if status.last_applied.is_empty() => "standing by".to_owned(),
-            _ => format!("standing by · last setup {}", status.last_applied),
-        }
+    let state = match status.phase {
+        Phase::Paused => "off".to_owned(),
+        Phase::Offline => "League disconnected".to_owned(),
+        Phase::Idle => "League connected".to_owned(),
+        Phase::InGame => "in game".to_owned(),
+        Phase::ChampSelect => match &status.setup {
+            Some(s) if s.runes_applied || s.spells_applied => pick(s),
+            _ => "champ select".to_owned(),
+        },
     };
-    let mut tip = format!("SMB Companion · {state}");
-    if !status.update.is_empty() {
-        tip.push_str(&format!(" · version {} is out", status.update));
-    }
-    tip.chars().take(127).collect()
+    format!("SMB Companion · {state}")
+        .chars()
+        .take(127)
+        .collect()
 }
 
 fn remove_tray() {

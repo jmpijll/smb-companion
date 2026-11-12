@@ -12,7 +12,7 @@
 <p align="center">
   <img src="docs/setup-applied.png" width="360" alt="Setup applied in champion select">
   &nbsp;
-  <img src="docs/standing-by.png" width="360" alt="Connected and standing by">
+  <img src="docs/minecraft.png" width="360" alt="SMB pack up to date, ready to play">
 </p>
 
 ## What it does
@@ -27,23 +27,27 @@
   your in-game shop, with the skill order in its first row. One set of its own; your other item sets stay as they are.
 - **Modes.** Ranked, normals, ARAM, ARAM Mayhem, URF, Arena and Swiftplay. Sits TFT out.
 
-## Minecraft (preview)
+## Minecraft
 
-Choose **Minecraft**, select the SMB instance you already imported into **Modrinth App 0.23.1**, then use **Play SMB**.
-SMB checks the stable client channel, verifies the exact pack and mod checksums, and updates that instance before handing launch to Modrinth.
-Automatic updates, launch after update, and checking direct Modrinth launches have separate toggles. Checking a compatible older pack does not force a server-only release update; **Repair pack** explicitly applies the latest compatible runtime.
+Open the **Minecraft** tab. That's it: one switch, one button.
 
-For direct launches, copy the command shown in the app into the instance's **Custom game launch hooks → Pre-launch** field, save, then refresh SMB to verify it. Keep existing custom hooks unchanged. The helper waits for the update, returns a failure code when launch must stop, and never opens or focuses the companion window.
+- **No SMB yet?** **Install** downloads the latest pack, checks it and hands it to Modrinth, which asks you to confirm once.
+  No Modrinth? **Get Modrinth** opens its download page.
+- **Automatic updates** keep the newest SMB instance in Modrinth on the latest pack while Minecraft is closed:
+  shortly after start, every half hour, and the moment Modrinth opens. **Play** updates first if needed, then hands over to Modrinth.
+- A pack for a new Minecraft version arrives as a new Modrinth instance (Play hands it to Modrinth); the companion follows the newest one.
+- Your own things stay yours: added mods, worlds, screenshots, and any setting you changed (configs, `options.txt`, shader settings).
+  A missing pack mod is put back; one you disabled in Modrinth stays disabled. A pack mod you replaced by hand waits for **Repair pack**.
+- Only Minecraft started by Modrinth holds updates back; other Java apps don't.
+  An interrupted update is rolled back and finished by the next one. Nothing writes to Modrinth's database or reads account credentials.
+- An update that can't run (no internet, say) never blocks Play. **Advanced** shows what happened.
 
-- Updates cover pack-owned mods and defaults. Personal config edits, added mods, worlds and screenshots stay intact. Modified pack-owned mods cause a conflict; missing mods require explicit repair.
-- Minecraft/Fabric runtime changes need a native Modrinth pack migration or a fresh import of the new pack, then selecting that instance in SMB. Changing only the runtime setting cannot migrate the old pack. SMB never edits the launcher database or reads account credentials.
-- Any running Java/Minecraft process defers updates. Interrupted changes are rolled back under an OS lock before another update; a pending recovery blocks launch even when checks are disabled.
-- Native resource-pack synchronization must be off for the selected instance. Native synced options/servers are excluded when first adopting it; enabling overlapping native sync later requires turning it off before further updates.
-- An unavailable channel blocks checked launches. Disable automatic checks explicitly to launch an intact existing pack without checking; interrupted installations still block.
+**Advanced** also has **Check pack**, **Repair pack** and an optional launch hook: paste it into the instance's
+*Launch hooks → Pre-launch* and Modrinth's own Play button waits for a pack check too. Background checks cover that already.
 
 The pack comes from the public feed at `https://sexymaarbescheiden.nl/minecraft/stable.json`, which every `smb-minecraft` release publishes. The source repository stays private. Developers can set `SMB_MINECRAFT_CHANNEL` to an explicit local `stable.json` for disposable-profile testing. No private GitHub token is needed or bundled. Client feed export instructions are in [the implementation notes](docs/minecraft/IMPLEMENTATION.md).
 
-The installed executable, updater repository and settings location remain compatible with existing `smb-lol` installations. Minecraft preferences are separate from League preferences.
+Modrinth App updates itself, so its version isn't pinned: the companion reads its profile database (0.23 schema) read-only and stops safely if that ever changes.
 
 ## Stays out of your game
 
@@ -67,13 +71,12 @@ Grab one from [Releases](../../releases/latest):
 | Where | `%LOCALAPPDATA%\Programs\SMB Companion` | Any folder you unzip it to |
 | Settings | `%APPDATA%\SMB\LoL Companion` | Inside that folder |
 | Extras | Start menu, optional desktop shortcut and *Start with Windows*, uninstaller | — |
-| Updating | Automatic: installs new versions while League, Minecraft/Java and pack updates are idle | Replace `smb-lol.exe`; the app shows when a new version is out |
+| Updating | Automatic: installs new versions while League, Minecraft and pack updates are idle | Replace `smb-lol.exe`; *Advanced* shows when a new version is out |
 
 Builds are **not code-signed yet**, so Windows SmartScreen will warn you: choose **More info → Run anyway**.
 Compare the file against `SHA256SUMS.txt` if you like to be sure.
 
-Close the window and it keeps running in the tray. Right-click the shuriken for
-**Open**, **Automatic runes & spells** (on/off) and **Quit**.
+Close the window and it keeps running in the tray. Right-click the shuriken for **Open** and **Quit**.
 
 **Uninstall.** Installer: *Settings → Apps → SMB Companion*. Your settings file is kept.
 Portable: switch off *Start with Windows*, quit from the tray, delete the folder.
@@ -88,7 +91,7 @@ Coming from the earlier *Quiet Select* build? Quit it first. This app takes over
   No internet, or OP.GG unavailable? League's own recommended runes and spells fill in. Nothing is guessed.
 - Rune page slots full? Delete one in the client and the companion takes it from there.
   Nothing of yours gets deleted to make room.
-- Problems retry on their own. **Activity log** (under *Connection & troubleshooting*) shows what happened and when.
+- Problems retry on their own. **Activity log** (under *Advanced*) shows what happened and when.
 - The installed version checks its update feed once a day (GitHub Pages, with the latest release as a fallback).
   Only an update signed with the project's release key is installed, so a hijacked GitHub account or download can't push one.
   It installs silently when you're not queueing, in champion select, in a game or looking at the window.
@@ -103,7 +106,7 @@ cargo test
 cargo test update::tests::live -- --ignored # live signed update feeds and their installer
 cargo build --release          # target/release/smb-lol.exe
 python -m unittest discover -s tools -p test_export_minecraft_channel.py
-python -m unittest discover -s tools -p test_minecraft_cli.py # requires a debug build + installed Modrinth 0.23.1
+python -m unittest discover -s tools -p test_minecraft_cli.py # requires a debug build + installed Modrinth App
 ```
 
 Development flags:
@@ -115,9 +118,10 @@ Development flags:
 | `--demo --screenshot out.png` | Render a sample champion-select state to a PNG and exit. |
 | `--minecraft` | Open the Minecraft page on a normal launch. |
 | `--demo-minecraft --screenshot out.png` | Render a synthetic Minecraft screen without live settings or actions. |
-| `--demo-minecraft --minecraft-demo-state install` | Preview other states: `install`, `modrinth`, `error`. |
+| `--demo-minecraft --minecraft-demo-state install` | Preview other states: `install`, `modrinth`, `update`, `error`. |
+| `--advanced` | Screenshots: render with *Advanced* unfolded. |
 | `--minecraft-prelaunch` | Synchronous, headless Modrinth hook; reads `INST_DIR`, exits 0 or 73. |
-| `--screenshot out.png --live` | Capture mode; live workers and external actions stay disabled. |
+| `--screenshot out.png --live` | Capture the real state: reads League and Modrinth, changes nothing before the capture. |
 
 The shuriken icons and installer artwork are generated by `python tools/make_icons.py` (Pillow).
 
@@ -134,14 +138,14 @@ cargo build --release
 To publish, bump `version` in `Cargo.toml`, then push a matching tag. GitHub Actions tests, packages and creates the release:
 
 ```sh
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 Then ship it to installed copies. On the maintainer's PC, once the release is up:
 
 ```powershell
-pwsh packaging\sign-update.ps1 -Tag v0.3.0
+pwsh packaging\sign-update.ps1 -Tag v0.5.0
 ```
 
 This signs the installer with the release key (`~\.smb-companion-release\update-key.pk8`, never in CI) and

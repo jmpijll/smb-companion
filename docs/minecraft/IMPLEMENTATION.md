@@ -53,7 +53,7 @@ Actual egui captures are in this directory (compact layout matching the League p
 
 ## Boundaries to validate before broad member rollout
 
-The native external launch URL and synchronous hook were checked against Modrinth 0.23.1 source, and the helper was exercised directly. An actual in-launcher hook/game-start session has not been performed while this machine's Java session is active. Later Modrinth versions intentionally fail until their schema/hook behavior is verified. Local filesystem checks reject existing reparse points, but are not a sandbox against a hostile process racing directory replacements. Busy checks do not claim to lock Modrinth's later Java startup.
+The native external launch URL and synchronous hook were checked against Modrinth 0.23.1 source, and the helper was exercised directly. An actual in-launcher hook/game-start session has not been performed while this machine's Java session is active. Modrinth updates itself, so its version is not pinned (0.23.3 verified read-only on a real install); an unrecognised profile schema fails closed instead. Local filesystem checks reject existing reparse points, but are not a sandbox against a hostile process racing directory replacements. Busy checks do not claim to lock Modrinth's later Java startup.
 
 ## Decisions made during implementation
 
